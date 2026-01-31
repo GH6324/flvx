@@ -13,17 +13,36 @@ import { Accordion, AccordionItem } from "@heroui/accordion";
 import toast from 'react-hot-toast';
 import axios from 'axios';
 
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  type DragEndEvent,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
 
 import { 
   createNode, 
   getNodeList, 
   updateNode, 
   deleteNode,
-  getNodeInstallCommand
+  getNodeInstallCommand,
+  updateNodeOrder
 } from "@/api";
 
 interface Node {
   id: number;
+  inx?: number;
   name: string;
   ip: string;
   serverIp: string;
@@ -63,6 +82,7 @@ interface NodeForm {
 
 export default function NodePage() {
   const [nodeList, setNodeList] = useState<Node[]>([]);
+  const [nodeOrder, setNodeOrder] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [dialogVisible, setDialogVisible] = useState(false);
   const [dialogTitle, setDialogTitle] = useState('');
@@ -112,12 +132,49 @@ export default function NodePage() {
     try {
       const res = await getNodeList();
       if (res.code === 0) {
-        setNodeList(res.data.map((node: any) => ({
+        const nodesData: Node[] = (res.data || []).map((node: any) => ({
           ...node,
+          inx: node.inx ?? 0,
           connectionStatus: node.status === 1 ? 'online' : 'offline',
           systemInfo: null,
-          copyLoading: false
-        })));
+          copyLoading: false,
+        }));
+
+        setNodeList(nodesData);
+
+        // 优先使用数据库中的 inx 字段进行排序，否则回退到本地排序
+        const hasDbOrdering = nodesData.some((n) => n.inx !== undefined && n.inx !== 0);
+        if (hasDbOrdering) {
+          const dbOrder = [...nodesData]
+            .sort((a, b) => (a.inx ?? 0) - (b.inx ?? 0))
+            .map((n) => n.id);
+          setNodeOrder(dbOrder);
+        } else {
+          try {
+            const stored = localStorage.getItem('node-order');
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              if (Array.isArray(parsed)) {
+                const existingIds = new Set(nodesData.map((n) => n.id));
+                const validOrder = parsed
+                  .map((id: any) => Number(id))
+                  .filter((id: number) => existingIds.has(id));
+
+                if (validOrder.length > 0) {
+                  setNodeOrder(validOrder);
+                } else {
+                  setNodeOrder(nodesData.map((n) => n.id));
+                }
+              } else {
+                setNodeOrder(nodesData.map((n) => n.id));
+              }
+            } else {
+              setNodeOrder(nodesData.map((n) => n.id));
+            }
+          } catch {
+            setNodeOrder(nodesData.map((n) => n.id));
+          }
+        }
       } else {
         toast.error(res.msg || '加载节点列表失败');
       }
@@ -606,6 +663,120 @@ export default function NodePage() {
     setErrors({});
   };
 
+  // 处理拖拽结束
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (!active || !over || active.id === over.id) return;
+    if (!nodeOrder || nodeOrder.length === 0) return;
+
+    const activeId = Number(active.id);
+    const overId = Number(over.id);
+    if (isNaN(activeId) || isNaN(overId)) return;
+
+    const oldIndex = nodeOrder.indexOf(activeId);
+    const newIndex = nodeOrder.indexOf(overId);
+    if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
+
+    const newOrder = arrayMove(nodeOrder, oldIndex, newIndex);
+    setNodeOrder(newOrder);
+
+    // 保存到 localStorage
+    try {
+      localStorage.setItem('node-order', JSON.stringify(newOrder));
+    } catch (error) {
+      console.warn('无法保存节点排序到localStorage:', error);
+    }
+
+    // 持久化到数据库
+    try {
+      const nodesToUpdate = newOrder.map((id, index) => ({ id, inx: index }));
+      const response = await updateNodeOrder({ nodes: nodesToUpdate });
+      if (response.code === 0) {
+        setNodeList((prev) =>
+          prev.map((node) => {
+            const updated = nodesToUpdate.find((n) => n.id === node.id);
+            return updated ? { ...node, inx: updated.inx } : node;
+          })
+        );
+      } else {
+        toast.error('保存排序失败：' + (response.msg || '未知错误'));
+      }
+    } catch (error) {
+      console.error('保存节点排序到数据库失败:', error);
+      toast.error('保存排序失败，请重试');
+    }
+  };
+
+  // 传感器配置
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // 根据排序顺序获取节点列表
+  const getSortedNodes = (): Node[] => {
+    if (!nodeList || nodeList.length === 0) return [];
+
+    const sortedNodes = [...nodeList].sort((a, b) => {
+      const aInx = a.inx ?? 0;
+      const bInx = b.inx ?? 0;
+      return aInx - bInx;
+    });
+
+    // 如果数据库中没有排序信息，则使用本地存储的顺序
+    if (nodeOrder && nodeOrder.length > 0 && sortedNodes.every((n) => n.inx === undefined || n.inx === 0)) {
+      const nodeMap = new Map(nodeList.map((n) => [n.id, n] as const));
+      const localSorted: Node[] = [];
+
+      nodeOrder.forEach((id) => {
+        const node = nodeMap.get(id);
+        if (node) localSorted.push(node);
+      });
+
+      nodeList.forEach((node) => {
+        if (!nodeOrder.includes(node.id)) {
+          localSorted.push(node);
+        }
+      });
+
+      return localSorted;
+    }
+
+    return sortedNodes;
+  };
+
+  const SortableItem = ({
+    id,
+    children,
+  }: {
+    id: number;
+    children: (listeners: any) => any;
+  }) => {
+    const {
+      attributes,
+      listeners,
+      setNodeRef,
+      transform,
+      transition,
+      isDragging,
+    } = useSortable({ id });
+
+    const style = {
+      transform: transform ? CSS.Transform.toString(transform) : undefined,
+      transition: transition || undefined,
+      opacity: isDragging ? 0.5 : 1,
+    };
+
+    return (
+      <div ref={setNodeRef} style={style} {...attributes}>
+        {children(listeners)}
+      </div>
+    );
+  };
+
   return (
     
       <div className="px-3 lg:px-6 py-8">
@@ -651,18 +822,35 @@ export default function NodePage() {
             </CardBody>
           </Card>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-            {nodeList.map((node) => (
-              <Card 
-                key={node.id} 
-                className="shadow-sm border border-divider hover:shadow-md transition-shadow duration-200"
-              >
+          <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+            <SortableContext
+              items={getSortedNodes().map((n) => n.id)}
+              strategy={rectSortingStrategy}
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+                {getSortedNodes().map((node) => (
+                  <SortableItem key={node.id} id={node.id}>
+                    {(listeners) => (
+                      <Card 
+                        key={node.id} 
+                        className="group shadow-sm border border-divider hover:shadow-md transition-shadow duration-200"
+                      >
                 <CardHeader className="pb-2">
                   <div className="flex justify-between items-start w-full">
                     <div className="flex-1 min-w-0">
                       <h3 className="font-semibold text-foreground truncate text-sm">{node.name}</h3>
                     </div>
                     <div className="flex items-center gap-1.5 ml-2">
+                      <div
+                        className="cursor-grab active:cursor-grabbing p-2 text-default-400 hover:text-default-600 transition-colors touch-manipulation opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                        {...listeners}
+                        title="拖拽排序"
+                        style={{ touchAction: 'none' }}
+                      >
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M7 2a2 2 0 1 1 .001 4.001A2 2 0 0 1 7 2zm0 6a2 2 0 1 1 .001 4.001A2 2 0 0 1 7 8zm0 6a2 2 0 1 1 .001 4.001A2 2 0 0 1 7 14zm6-8a2 2 0 1 1-.001-4.001A2 2 0 0 1 13 6zm0 2a2 2 0 1 1 .001 4.001A2 2 0 0 1 13 8zm0 6a2 2 0 1 1 .001 4.001A2 2 0 0 1 13 14z" />
+                        </svg>
+                      </div>
                       <Chip 
                         color={node.connectionStatus === 'online' ? 'success' : 'danger'} 
                         variant="flat" 
@@ -825,9 +1013,13 @@ export default function NodePage() {
                   </div>
                 </CardBody>
               </Card>
-            ))}
-          </div>
-        )}
+            )}
+          </SortableItem>
+        ))}
+      </div>
+    </SortableContext>
+  </DndContext>
+)}
 
         {/* 新增/编辑节点对话框 */}
         <Modal 
