@@ -67,3 +67,13 @@ curl -L https://raw.githubusercontent.com/Sagit-chu/flux-panel/beta/install.sh -
 
 
 请务必在合法、合规、安全的前提下使用本项目。
+
+---
+## ⭐ 喝杯咖啡！（USDT）
+
+| 网络       | 地址                                                                 |
+|------------|----------------------------------------------------------------------|
+| BNB(BEP20) | `0xa608708fdc6279a2433fd4b82f0b72b8cbe97ed5`                          |
+| TRC20      | `TM8VYdU3s3gSX5PC8swjAJrAzZFCHKqG2k`                                  |
+| Aptos      | `0x49427bfcba1006a346447430689b2307ac156316bb34850d1d3029ff9d118da5`  |
+| polygon    |  `0xa608708fdc6279a2433fd4b82f0b72b8cbe97ed5`    |
