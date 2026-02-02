@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Button } from "@heroui/button";
 import { Input } from "@heroui/input";
@@ -16,7 +16,8 @@ import axios from 'axios';
 import {
   DndContext,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   type DragEndEvent,
   useSensor,
   useSensors,
@@ -102,8 +103,9 @@ const SortableItem = ({
 
   const style = {
     transform: transform ? CSS.Transform.toString(transform) : undefined,
-    transition: transition || undefined,
+    transition: isDragging ? undefined : transition || undefined,
     opacity: isDragging ? 0.5 : 1,
+    willChange: 'transform',
   };
 
   return (
@@ -806,24 +808,34 @@ export default function NodePage() {
 
   // 传感器配置
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(MouseSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 250,
+        tolerance: 8,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
 
   // 根据排序顺序获取节点列表
-  const getSortedNodes = (): Node[] => {
+  const sortedNodes = useMemo((): Node[] => {
     if (!nodeList || nodeList.length === 0) return [];
 
-    const sortedNodes = [...nodeList].sort((a, b) => {
+    const sortedByDb = [...nodeList].sort((a, b) => {
       const aInx = a.inx ?? 0;
       const bInx = b.inx ?? 0;
       return aInx - bInx;
     });
 
     // 如果数据库中没有排序信息，则使用本地存储的顺序
-    if (nodeOrder && nodeOrder.length > 0 && sortedNodes.every((n) => n.inx === undefined || n.inx === 0)) {
+    if (nodeOrder && nodeOrder.length > 0 && sortedByDb.every((n) => n.inx === undefined || n.inx === 0)) {
       const nodeMap = new Map(nodeList.map((n) => [n.id, n] as const));
       const localSorted: Node[] = [];
 
@@ -841,8 +853,10 @@ export default function NodePage() {
       return localSorted;
     }
 
-    return sortedNodes;
-  };
+    return sortedByDb;
+  }, [nodeList, nodeOrder]);
+
+  const sortableNodeIds = useMemo(() => sortedNodes.map((n) => n.id), [sortedNodes]);
 
   return (
     
@@ -900,11 +914,11 @@ export default function NodePage() {
         ) : (
           <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
             <SortableContext
-              items={getSortedNodes().map((n) => n.id)}
+              items={sortableNodeIds}
               strategy={rectSortingStrategy}
             >
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-                {getSortedNodes().map((node) => (
+                {sortedNodes.map((node) => (
                   <SortableItem key={node.id} id={node.id}>
                     {(listeners) => (
                       <Card 

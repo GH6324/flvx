@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Button } from "@heroui/button";
 import { Input, Textarea } from "@heroui/input";
@@ -13,7 +13,8 @@ import toast from 'react-hot-toast';
 import {
   DndContext,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   type DragEndEvent,
   useSensor,
   useSensors,
@@ -586,24 +587,34 @@ export default function TunnelPage() {
 
   // 传感器配置
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(MouseSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 250,
+        tolerance: 8,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
 
   // 根据排序顺序获取隧道列表
-  const getSortedTunnels = (): Tunnel[] => {
+  const sortedTunnels = useMemo((): Tunnel[] => {
     if (!tunnels || tunnels.length === 0) return [];
 
-    const sortedTunnels = [...tunnels].sort((a, b) => {
+    const sortedByDb = [...tunnels].sort((a, b) => {
       const aInx = a.inx ?? 0;
       const bInx = b.inx ?? 0;
       return aInx - bInx;
     });
 
     // 如果数据库中没有排序信息，则使用本地存储的顺序
-    if (tunnelOrder && tunnelOrder.length > 0 && sortedTunnels.every((t) => t.inx === undefined || t.inx === 0)) {
+    if (tunnelOrder && tunnelOrder.length > 0 && sortedByDb.every((t) => t.inx === undefined || t.inx === 0)) {
       const tunnelMap = new Map(tunnels.map((t) => [t.id, t] as const));
       const localSorted: Tunnel[] = [];
 
@@ -621,8 +632,10 @@ export default function TunnelPage() {
       return localSorted;
     }
 
-    return sortedTunnels;
-  };
+    return sortedByDb;
+  }, [tunnels, tunnelOrder]);
+
+  const sortableTunnelIds = useMemo(() => sortedTunnels.map((t) => t.id), [sortedTunnels]);
 
   const SortableItem = ({
     id,
@@ -642,8 +655,9 @@ export default function TunnelPage() {
 
     const style = {
       transform: transform ? CSS.Transform.toString(transform) : undefined,
-      transition: transition || undefined,
+      transition: isDragging ? undefined : transition || undefined,
       opacity: isDragging ? 0.5 : 1,
+      willChange: 'transform',
     };
 
     return (
@@ -690,11 +704,11 @@ export default function TunnelPage() {
         {tunnels.length > 0 ? (
           <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
             <SortableContext
-              items={getSortedTunnels().map((t) => t.id)}
+              items={sortableTunnelIds}
               strategy={rectSortingStrategy}
             >
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-                {getSortedTunnels().map((tunnel) => {
+                {sortedTunnels.map((tunnel) => {
               const typeDisplay = getTypeDisplay(tunnel.type);
               
               return (

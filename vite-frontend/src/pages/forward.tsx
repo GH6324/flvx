@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Button } from "@heroui/button";
 import { Input } from "@heroui/input";
@@ -15,7 +15,8 @@ import {
   DndContext,
   closestCenter,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   DragEndEvent,
@@ -353,8 +354,6 @@ export default function ForwardPage() {
     const userMap = new Map<string, UserGroup>();
     
     // 获取排序后的转发列表
-    const sortedForwards = getSortedForwards();
-    
     sortedForwards.forEach(forward => {
       const userKey = forward.userId ? forward.userId.toString() : 'unknown';
       const userName = forward.userName || '未知用户';
@@ -855,7 +854,7 @@ export default function ForwardPage() {
         );
       } else {
         // 直接显示模式下，过滤指定隧道的转发
-        forwardsToExport = getSortedForwards().filter(forward => forward.tunnelId === selectedTunnelForExport);
+        forwardsToExport = sortedForwards.filter(forward => forward.tunnelId === selectedTunnelForExport);
       }
       
       if (forwardsToExport.length === 0) {
@@ -1102,19 +1101,29 @@ export default function ForwardPage() {
 
   // 传感器配置 - 使用默认配置避免错误
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(MouseSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 250,
+        tolerance: 8,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
 
   // 根据排序顺序获取转发列表
-  const getSortedForwards = (): Forward[] => {
+  const sortedForwards = useMemo((): Forward[] => {
     // 确保 forwards 数组存在且有效
     if (!forwards || forwards.length === 0) {
       return [];
     }
-    
+
     // 在平铺模式下，只显示当前用户的转发
     let filteredForwards = forwards;
     if (viewMode === 'direct') {
@@ -1123,43 +1132,48 @@ export default function ForwardPage() {
         filteredForwards = forwards.filter(forward => forward.userId === currentUserId);
       }
     }
-    
+
     // 确保过滤后的转发列表有效
     if (!filteredForwards || filteredForwards.length === 0) {
       return [];
     }
-    
+
     // 优先使用数据库中的 inx 字段进行排序
-    const sortedForwards = [...filteredForwards].sort((a, b) => {
+    const sortedByDb = [...filteredForwards].sort((a, b) => {
       const aInx = a.inx ?? 0;
       const bInx = b.inx ?? 0;
       return aInx - bInx;
     });
-    
+
     // 如果数据库中没有排序信息，则使用本地存储的顺序
-    if (forwardOrder && forwardOrder.length > 0 && sortedForwards.every(f => f.inx === undefined || f.inx === 0)) {
+    if (forwardOrder && forwardOrder.length > 0 && sortedByDb.every(f => f.inx === undefined || f.inx === 0)) {
       const forwardMap = new Map(filteredForwards.map(f => [f.id, f]));
       const localSortedForwards: Forward[] = [];
-      
+
       forwardOrder.forEach(id => {
         const forward = forwardMap.get(id);
         if (forward) {
           localSortedForwards.push(forward);
         }
       });
-      
+
       // 添加不在排序列表中的转发（新添加的）
       filteredForwards.forEach(forward => {
         if (!forwardOrder.includes(forward.id)) {
           localSortedForwards.push(forward);
         }
       });
-      
+
       return localSortedForwards;
     }
-    
-    return sortedForwards;
-  };
+
+    return sortedByDb;
+  }, [forwards, forwardOrder, viewMode]);
+
+  const sortableForwardIds = useMemo(
+    () => sortedForwards.map(f => f.id).filter(id => id > 0),
+    [sortedForwards]
+  );
 
   // 可拖拽的转发卡片组件
   const SortableForwardCard = ({ forward }: { forward: Forward }) => {
@@ -1179,8 +1193,9 @@ export default function ForwardPage() {
 
     const style = {
       transform: transform ? CSS.Transform.toString(transform) : undefined,
-      transition: transition || undefined,
+      transition: isDragging ? undefined : transition || undefined,
       opacity: isDragging ? 0.5 : 1,
+      willChange: 'transform',
     };
 
     return (
@@ -1529,11 +1544,11 @@ export default function ForwardPage() {
               onDragStart={() => {}} // 添加空的 onDragStart 处理器
             >
               <SortableContext
-                items={getSortedForwards().map(f => f.id || 0).filter(id => id > 0)}
+                items={sortableForwardIds}
                 strategy={rectSortingStrategy}
               >
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-                  {getSortedForwards().map((forward) => (
+                  {sortedForwards.map((forward) => (
                     forward && forward.id ? (
                       <SortableForwardCard key={forward.id} forward={forward} />
                     ) : null
