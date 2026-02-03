@@ -536,7 +536,8 @@ public class TunnelServiceImpl extends ServiceImpl<TunnelMapper, Tunnel> impleme
         tunnel.setTrafficRatio(tunnelUpdateDto.getTrafficRatio());
         tunnel.setInIp(tunnelUpdateDto.getInIp());
 
-        if (StringUtils.isEmpty(tunnel.getInIp())) {
+        boolean forceRegenerateInIp = hasNodeChanges && tunnelUpdateDto.getInNodeId() != null;
+        if (StringUtils.isEmpty(tunnel.getInIp()) || forceRegenerateInIp) {
             java.util.LinkedHashSet<String> inIps = new java.util.LinkedHashSet<>();
             List<ChainTunnel> chainTunnels = chainTunnelService.list(
                     new QueryWrapper<ChainTunnel>().eq("tunnel_id", tunnel.getId()).eq("chain_type", 1)
