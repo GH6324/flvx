@@ -1903,7 +1903,6 @@ export default function ForwardPage() {
                           handleTunnelChange(selectedKey);
                         }
                       }}
-                    }
                   >
                     {tunnels.map((tunnel) => (
                       <SelectItem key={tunnel.id}>{tunnel.name}</SelectItem>

@@ -416,7 +416,6 @@ export default function LimitPage() {
                       value={form.speed.toString()}
                       variant="bordered"
                       onChange={(e) => setForm(prev => ({ ...prev, speed: parseInt(e.target.value) || 0 }))}
-                    }
                   />
 
                   <Select
