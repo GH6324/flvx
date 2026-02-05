@@ -51,6 +51,10 @@ public class GostUtil {
 
             JSONObject connector = new JSONObject();
             connector.put("type", "relay");
+            // 启用 noDelay 以确保连接错误能立即传播，使故障转移正常工作
+            JSONObject connectorMetadata = new JSONObject();
+            connectorMetadata.put("nodelay", true);
+            connector.put("metadata", connectorMetadata);
 
             Node node_info = node_s.get(chainTunnel.getNodeId());
             JSONObject node = new JSONObject();
