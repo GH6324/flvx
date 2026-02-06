@@ -2,11 +2,24 @@ package sqlite
 
 import (
 	"database/sql"
+	_ "embed"
 	"errors"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+//go:embed sql/schema.sql
+var embeddedSchema string
+
+//go:embed sql/data.sql
+var embeddedSeedData string
 
 type Repository struct {
 	db *sql.DB
@@ -85,12 +98,21 @@ type Node struct {
 }
 
 func Open(path string) (*Repository, error) {
+	if err := ensureParentDir(path); err != nil {
+		return nil, err
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
 
 	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	if err := bootstrapSchema(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -415,6 +437,625 @@ func (r *Repository) AddFlow(forwardID, userID int64, userTunnelID int64, inFlow
 	return err
 }
 
+func (r *Repository) ListNodes() ([]map[string]interface{}, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+
+	rows, err := r.db.Query(`
+		SELECT id, inx, name, server_ip, server_ip_v4, server_ip_v6, port, tcp_listen_addr, udp_listen_addr, version, http, tls, socks, status
+		FROM node
+		ORDER BY inx ASC, id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var id, inx int64
+		var name, serverIP, port string
+		var serverIPV4, serverIPV6, tcpListen, udpListen, version sql.NullString
+		var httpVal, tlsVal, socksVal, status int
+
+		if err := rows.Scan(&id, &inx, &name, &serverIP, &serverIPV4, &serverIPV6, &port, &tcpListen, &udpListen, &version, &httpVal, &tlsVal, &socksVal, &status); err != nil {
+			return nil, err
+		}
+
+		items = append(items, map[string]interface{}{
+			"id":            id,
+			"inx":           inx,
+			"name":          name,
+			"ip":            serverIP,
+			"serverIp":      serverIP,
+			"serverIpV4":    nullableString(serverIPV4),
+			"serverIpV6":    nullableString(serverIPV6),
+			"port":          port,
+			"tcpListenAddr": nullableString(tcpListen),
+			"udpListenAddr": nullableString(udpListen),
+			"version":       nullableString(version),
+			"http":          httpVal,
+			"tls":           tlsVal,
+			"socks":         socksVal,
+			"status":        status,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *Repository) ListUsers() ([]map[string]interface{}, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+
+	rows, err := r.db.Query(`
+		SELECT id, user, role_id, exp_time, flow, in_flow, out_flow, flow_reset_time, num, created_time, updated_time, status
+		FROM user
+		ORDER BY id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var id int64
+		var user string
+		var roleID int
+		var expTime, flow, inFlow, outFlow, flowResetTime, createdTime int64
+		var num, status int
+		var updatedTime sql.NullInt64
+
+		if err := rows.Scan(&id, &user, &roleID, &expTime, &flow, &inFlow, &outFlow, &flowResetTime, &num, &createdTime, &updatedTime, &status); err != nil {
+			return nil, err
+		}
+
+		items = append(items, map[string]interface{}{
+			"id":            id,
+			"user":          user,
+			"name":          user,
+			"roleId":        roleID,
+			"status":        status,
+			"flow":          flow,
+			"num":           num,
+			"expTime":       expTime,
+			"flowResetTime": flowResetTime,
+			"createdTime":   createdTime,
+			"updatedTime":   nullableInt64(updatedTime),
+			"inFlow":        inFlow,
+			"outFlow":       outFlow,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *Repository) ListSpeedLimits() ([]map[string]interface{}, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+
+	rows, err := r.db.Query(`
+		SELECT id, name, speed, tunnel_id, tunnel_name, status, created_time, updated_time
+		FROM speed_limit
+		ORDER BY id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var id, tunnelID, createdTime int64
+		var name, tunnelName string
+		var speed, status int
+		var updatedTime sql.NullInt64
+		if err := rows.Scan(&id, &name, &speed, &tunnelID, &tunnelName, &status, &createdTime, &updatedTime); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]interface{}{
+			"id":          id,
+			"name":        name,
+			"speed":       speed,
+			"tunnelId":    tunnelID,
+			"tunnelName":  tunnelName,
+			"status":      status,
+			"createdTime": createdTime,
+			"updatedTime": nullableInt64(updatedTime),
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *Repository) ListForwards() ([]map[string]interface{}, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+
+	rows, err := r.db.Query(`
+		SELECT f.id, f.user_id, f.user_name, f.name, f.tunnel_id, t.name, f.remote_addr, f.strategy,
+		       f.in_flow, f.out_flow, f.created_time, f.status, f.inx,
+		       GROUP_CONCAT(CASE WHEN n.server_ip IS NOT NULL AND fp.port IS NOT NULL THEN n.server_ip || ':' || fp.port END),
+		       MIN(fp.port)
+		FROM forward f
+		LEFT JOIN tunnel t ON t.id = f.tunnel_id
+		LEFT JOIN forward_port fp ON fp.forward_id = f.id
+		LEFT JOIN node n ON n.id = fp.node_id
+		GROUP BY f.id
+		ORDER BY f.inx ASC, f.id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var id, userID, tunnelID, inFlow, outFlow, createdTime, inx int64
+		var userName, name, tunnelName, remoteAddr, strategy string
+		var status int
+		var inIP sql.NullString
+		var inPort sql.NullInt64
+
+		if err := rows.Scan(&id, &userID, &userName, &name, &tunnelID, &tunnelName, &remoteAddr, &strategy, &inFlow, &outFlow, &createdTime, &status, &inx, &inIP, &inPort); err != nil {
+			return nil, err
+		}
+
+		items = append(items, map[string]interface{}{
+			"id":          id,
+			"userId":      userID,
+			"userName":    userName,
+			"name":        name,
+			"tunnelId":    tunnelID,
+			"tunnelName":  tunnelName,
+			"inIp":        nullableString(inIP),
+			"inPort":      nullableInt64(inPort),
+			"remoteAddr":  remoteAddr,
+			"strategy":    strategy,
+			"inFlow":      inFlow,
+			"outFlow":     outFlow,
+			"createdTime": createdTime,
+			"status":      status,
+			"inx":         inx,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *Repository) ListUserAccessibleTunnels(userID int64) ([]map[string]interface{}, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+
+	rows, err := r.db.Query(`
+		SELECT t.id, t.name
+		FROM user_tunnel ut
+		JOIN tunnel t ON t.id = ut.tunnel_id
+		WHERE ut.user_id = ? AND ut.status = 1
+		ORDER BY t.inx ASC, t.id ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]interface{}{"id": id, "name": name})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *Repository) ListTunnels() ([]map[string]interface{}, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+
+	rows, err := r.db.Query(`
+		SELECT id, inx, name, type, flow, traffic_ratio, status, created_time, in_ip
+		FROM tunnel
+		ORDER BY inx ASC, id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tunnelMap := make(map[int64]map[string]interface{})
+	orderedIDs := make([]int64, 0)
+
+	for rows.Next() {
+		var id, inx, flow, createdTime int64
+		var name string
+		var typ, status int
+		var trafficRatio float64
+		var inIP sql.NullString
+		if err := rows.Scan(&id, &inx, &name, &typ, &flow, &trafficRatio, &status, &createdTime, &inIP); err != nil {
+			return nil, err
+		}
+
+		tunnelMap[id] = map[string]interface{}{
+			"id":           id,
+			"inx":          inx,
+			"name":         name,
+			"type":         typ,
+			"flow":         flow,
+			"trafficRatio": trafficRatio,
+			"status":       status,
+			"createdTime":  createdTime,
+			"inIp":         nullableString(inIP),
+			"inNodeId":     make([]map[string]interface{}, 0),
+			"outNodeId":    make([]map[string]interface{}, 0),
+			"chainNodes":   make([][]map[string]interface{}, 0),
+		}
+		orderedIDs = append(orderedIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	nodeIPMap := map[int64]string{}
+	nRows, err := r.db.Query(`SELECT id, server_ip FROM node`)
+	if err == nil {
+		for nRows.Next() {
+			var id int64
+			var ip string
+			if scanErr := nRows.Scan(&id, &ip); scanErr == nil {
+				nodeIPMap[id] = ip
+			}
+		}
+		_ = nRows.Close()
+	}
+
+	chainRows, err := r.db.Query(`
+		SELECT tunnel_id, chain_type, node_id, protocol, strategy, COALESCE(inx, 0)
+		FROM chain_tunnel
+		ORDER BY tunnel_id ASC, chain_type ASC, inx ASC, id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer chainRows.Close()
+
+	chainBucket := map[int64]map[int][]map[string]interface{}{}
+	inNodeIPs := map[int64][]string{}
+
+	for chainRows.Next() {
+		var tunnelID, nodeID, inx int64
+		var chainType int
+		var protocol, strategy sql.NullString
+		if err := chainRows.Scan(&tunnelID, &chainType, &nodeID, &protocol, &strategy, &inx); err != nil {
+			return nil, err
+		}
+
+		t, ok := tunnelMap[tunnelID]
+		if !ok {
+			continue
+		}
+
+		nodeObj := map[string]interface{}{
+			"nodeId":    nodeID,
+			"chainType": chainType,
+			"inx":       inx,
+		}
+		if protocol.Valid {
+			nodeObj["protocol"] = protocol.String
+		}
+		if strategy.Valid {
+			nodeObj["strategy"] = strategy.String
+		}
+
+		switch chainType {
+		case 1:
+			t["inNodeId"] = append(t["inNodeId"].([]map[string]interface{}), nodeObj)
+			if ip, ok := nodeIPMap[nodeID]; ok && ip != "" {
+				inNodeIPs[tunnelID] = append(inNodeIPs[tunnelID], ip)
+			}
+		case 2:
+			if _, ok := chainBucket[tunnelID]; !ok {
+				chainBucket[tunnelID] = map[int][]map[string]interface{}{}
+			}
+			chainBucket[tunnelID][int(inx)] = append(chainBucket[tunnelID][int(inx)], nodeObj)
+		case 3:
+			t["outNodeId"] = append(t["outNodeId"].([]map[string]interface{}), nodeObj)
+		}
+	}
+	if err := chainRows.Err(); err != nil {
+		return nil, err
+	}
+
+	for tunnelID, groups := range chainBucket {
+		t := tunnelMap[tunnelID]
+		if t == nil {
+			continue
+		}
+		keys := make([]int, 0, len(groups))
+		for k := range groups {
+			keys = append(keys, k)
+		}
+		sort.Ints(keys)
+		ordered := make([][]map[string]interface{}, 0, len(keys))
+		for _, k := range keys {
+			ordered = append(ordered, groups[k])
+		}
+		t["chainNodes"] = ordered
+
+		if s, ok := t["inIp"].(string); !ok || strings.TrimSpace(s) == "" {
+			if ips := inNodeIPs[tunnelID]; len(ips) > 0 {
+				t["inIp"] = strings.Join(ips, ",")
+			}
+		}
+	}
+
+	result := make([]map[string]interface{}, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
+		if t, ok := tunnelMap[id]; ok {
+			result = append(result, t)
+		}
+	}
+	return result, nil
+}
+
+func (r *Repository) ListTunnelGroups() ([]map[string]interface{}, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+
+	rows, err := r.db.Query(`SELECT id, name, status, created_time FROM tunnel_group ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var id, createdTime int64
+		var name string
+		var status int
+		if err := rows.Scan(&id, &name, &status, &createdTime); err != nil {
+			return nil, err
+		}
+
+		ids, names, err := r.listTunnelGroupMembers(id)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, map[string]interface{}{
+			"id":          id,
+			"name":        name,
+			"status":      status,
+			"tunnelIds":   ids,
+			"tunnelNames": names,
+			"createdTime": createdTime,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *Repository) ListUserGroups() ([]map[string]interface{}, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+
+	rows, err := r.db.Query(`SELECT id, name, status, created_time FROM user_group ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var id, createdTime int64
+		var name string
+		var status int
+		if err := rows.Scan(&id, &name, &status, &createdTime); err != nil {
+			return nil, err
+		}
+
+		ids, names, err := r.listUserGroupMembers(id)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, map[string]interface{}{
+			"id":          id,
+			"name":        name,
+			"status":      status,
+			"userIds":     ids,
+			"userNames":   names,
+			"createdTime": createdTime,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *Repository) ListGroupPermissions() ([]map[string]interface{}, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+
+	rows, err := r.db.Query(`
+		SELECT gp.id, gp.user_group_id, ug.name, gp.tunnel_group_id, tg.name, gp.created_time
+		FROM group_permission gp
+		LEFT JOIN user_group ug ON ug.id = gp.user_group_id
+		LEFT JOIN tunnel_group tg ON tg.id = gp.tunnel_group_id
+		ORDER BY gp.id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var id, userGroupID, tunnelGroupID, createdTime int64
+		var userGroupName, tunnelGroupName sql.NullString
+		if err := rows.Scan(&id, &userGroupID, &userGroupName, &tunnelGroupID, &tunnelGroupName, &createdTime); err != nil {
+			return nil, err
+		}
+
+		result = append(result, map[string]interface{}{
+			"id":              id,
+			"userGroupId":     userGroupID,
+			"userGroupName":   nullableString(userGroupName),
+			"tunnelGroupId":   tunnelGroupID,
+			"tunnelGroupName": nullableString(tunnelGroupName),
+			"createdTime":     createdTime,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *Repository) listTunnelGroupMembers(groupID int64) ([]int64, []string, error) {
+	rows, err := r.db.Query(`
+		SELECT t.id, t.name
+		FROM tunnel_group_tunnel tgt
+		JOIN tunnel t ON t.id = tgt.tunnel_id
+		WHERE tgt.tunnel_group_id = ?
+		ORDER BY t.id ASC
+	`, groupID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	ids := make([]int64, 0)
+	names := make([]string, 0)
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, nil, err
+		}
+		ids = append(ids, id)
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return ids, names, nil
+}
+
+func (r *Repository) listUserGroupMembers(groupID int64) ([]int64, []string, error) {
+	rows, err := r.db.Query(`
+		SELECT u.id, u.user
+		FROM user_group_user ugu
+		JOIN user u ON u.id = ugu.user_id
+		WHERE ugu.user_group_id = ?
+		ORDER BY u.id ASC
+	`, groupID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	ids := make([]int64, 0)
+	names := make([]string, 0)
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, nil, err
+		}
+		ids = append(ids, id)
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return ids, names, nil
+}
+
+func nullableString(v sql.NullString) interface{} {
+	if v.Valid {
+		return v.String
+	}
+	return nil
+}
+
+func nullableInt64(v sql.NullInt64) interface{} {
+	if v.Valid {
+		return v.Int64
+	}
+	return nil
+}
+
 func unixMilliNow() int64 {
 	return time.Now().UnixMilli()
+}
+
+func ensureParentDir(dbPath string) error {
+	if dbPath == "" {
+		return fmt.Errorf("empty db path")
+	}
+	dir := filepath.Dir(dbPath)
+	if dir == "" || dir == "." {
+		return nil
+	}
+	return osMkdirAll(dir)
+}
+
+func bootstrapSchema(db *sql.DB) error {
+	if db == nil {
+		return errors.New("nil db")
+	}
+
+	var exists int
+	err := db.QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name='user'`).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("check schema: %w", err)
+	}
+	if exists > 0 {
+		return nil
+	}
+
+	log.Printf("sqlite schema not found, bootstrapping embedded schema")
+	if _, err := db.Exec(embeddedSchema); err != nil {
+		return fmt.Errorf("apply schema.sql: %w", err)
+	}
+	if _, err := db.Exec(embeddedSeedData); err != nil {
+		return fmt.Errorf("apply data.sql: %w", err)
+	}
+	return nil
+}
+
+var osMkdirAll = func(path string) error {
+	return os.MkdirAll(path, 0o755)
 }

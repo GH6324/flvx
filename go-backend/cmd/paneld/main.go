@@ -19,6 +19,7 @@ func main() {
 	if cfg.JWTSecret == "" {
 		log.Println("warning: JWT_SECRET is empty")
 	}
+	log.Printf("starting go-backend on %s (db=%s)", cfg.Addr, cfg.DBPath)
 
 	a, err := app.New(cfg)
 	if err != nil {

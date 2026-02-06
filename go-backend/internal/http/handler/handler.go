@@ -62,6 +62,7 @@ func (h *Handler) WebSocketHandler() http.Handler {
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/user/login", h.login)
+	mux.HandleFunc("/api/v1/user/list", h.userList)
 	mux.HandleFunc("/api/v1/config/get", h.getConfigByName)
 	mux.HandleFunc("/api/v1/config/list", h.getConfigs)
 	mux.HandleFunc("/api/v1/config/update", h.updateConfigs)
@@ -69,6 +70,15 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/captcha/check", h.checkCaptcha)
 	mux.HandleFunc("/api/v1/user/package", h.userPackage)
 	mux.HandleFunc("/api/v1/user/updatePassword", h.updatePassword)
+	mux.HandleFunc("/api/v1/node/list", h.nodeList)
+	mux.HandleFunc("/api/v1/tunnel/list", h.tunnelList)
+	mux.HandleFunc("/api/v1/forward/list", h.forwardList)
+	mux.HandleFunc("/api/v1/speed-limit/list", h.speedLimitList)
+	mux.HandleFunc("/api/v1/tunnel/user/tunnel", h.userTunnelVisibleList)
+	mux.HandleFunc("/api/v1/tunnel/user/list", h.userTunnelList)
+	mux.HandleFunc("/api/v1/group/tunnel/list", h.tunnelGroupList)
+	mux.HandleFunc("/api/v1/group/user/list", h.userGroupList)
+	mux.HandleFunc("/api/v1/group/permission/list", h.groupPermissionList)
 
 	mux.HandleFunc("/flow/test", h.flowTest)
 	mux.HandleFunc("/flow/config", h.flowConfig)
@@ -180,6 +190,191 @@ func (h *Handler) getConfigs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.WriteJSON(w, response.OK(cfgMap))
+}
+
+func (h *Handler) userList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("请求失败"))
+		return
+	}
+
+	users, err := h.repo.ListUsers()
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	response.WriteJSON(w, response.OK(users))
+}
+
+func (h *Handler) nodeList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("请求失败"))
+		return
+	}
+
+	items, err := h.repo.ListNodes()
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	response.WriteJSON(w, response.OK(items))
+}
+
+func (h *Handler) tunnelList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("请求失败"))
+		return
+	}
+
+	items, err := h.repo.ListTunnels()
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	response.WriteJSON(w, response.OK(items))
+}
+
+func (h *Handler) forwardList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("请求失败"))
+		return
+	}
+
+	items, err := h.repo.ListForwards()
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	response.WriteJSON(w, response.OK(items))
+}
+
+func (h *Handler) speedLimitList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("请求失败"))
+		return
+	}
+
+	items, err := h.repo.ListSpeedLimits()
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	response.WriteJSON(w, response.OK(items))
+}
+
+func (h *Handler) userTunnelVisibleList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("请求失败"))
+		return
+	}
+
+	userID, err := userIDFromRequest(r)
+	if err != nil {
+		response.WriteJSON(w, response.Err(401, "无效的token或token已过期"))
+		return
+	}
+
+	items, err := h.repo.ListUserAccessibleTunnels(userID)
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	response.WriteJSON(w, response.OK(items))
+}
+
+func (h *Handler) userTunnelList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("请求失败"))
+		return
+	}
+
+	var req struct {
+		UserID int64 `json:"userId"`
+	}
+	if err := decodeJSON(r.Body, &req); err != nil {
+		response.WriteJSON(w, response.ErrDefault("请求参数错误"))
+		return
+	}
+	if req.UserID <= 0 {
+		response.WriteJSON(w, response.OK([]interface{}{}))
+		return
+	}
+
+	tunnels, err := h.repo.GetUserPackageTunnels(req.UserID)
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+
+	out := make([]map[string]interface{}, 0, len(tunnels))
+	for _, t := range tunnels {
+		item := map[string]interface{}{
+			"id":             t.ID,
+			"userId":         t.UserID,
+			"tunnelId":       t.TunnelID,
+			"tunnelName":     t.TunnelName,
+			"status":         1,
+			"flow":           t.Flow,
+			"num":            t.Num,
+			"expTime":        t.ExpTime,
+			"flowResetTime":  t.FlowResetTime,
+			"inFlow":         t.InFlow,
+			"outFlow":        t.OutFlow,
+			"tunnelFlow":     t.TunnelFlow,
+			"speedId":        nil,
+			"speedLimitName": nil,
+		}
+		if t.SpeedID.Valid {
+			item["speedId"] = t.SpeedID.Int64
+		}
+		if t.SpeedLimit.Valid {
+			item["speedLimitName"] = t.SpeedLimit.String
+		}
+		out = append(out, item)
+	}
+	response.WriteJSON(w, response.OK(out))
+}
+
+func (h *Handler) tunnelGroupList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("请求失败"))
+		return
+	}
+
+	items, err := h.repo.ListTunnelGroups()
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	response.WriteJSON(w, response.OK(items))
+}
+
+func (h *Handler) userGroupList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("请求失败"))
+		return
+	}
+
+	items, err := h.repo.ListUserGroups()
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	response.WriteJSON(w, response.OK(items))
+}
+
+func (h *Handler) groupPermissionList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("请求失败"))
+		return
+	}
+
+	items, err := h.repo.ListGroupPermissions()
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	response.WriteJSON(w, response.OK(items))
 }
 
 func (h *Handler) checkCaptcha(w http.ResponseWriter, r *http.Request) {
@@ -533,6 +728,14 @@ func parseUserID(sub string) (int64, error) {
 		return 0, strconv.ErrSyntax
 	}
 	return id, nil
+}
+
+func userIDFromRequest(r *http.Request) (int64, error) {
+	claims, ok := r.Context().Value(middleware.ClaimsContextKey).(auth.Claims)
+	if !ok {
+		return 0, strconv.ErrSyntax
+	}
+	return parseUserID(claims.Sub)
 }
 
 func nullableNullInt64(v sql.NullInt64) interface{} {
