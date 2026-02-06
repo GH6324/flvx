@@ -78,11 +78,16 @@ resolve_version() {
   return 1
 }
 
+# 根据版本号设置 compose 下载地址
+set_compose_urls_by_version() {
+  local version="$1"
+  DOCKER_COMPOSEV4_URL=$(maybe_proxy_url "https://github.com/${REPO}/releases/download/${version}/docker-compose-v4.yml")
+  DOCKER_COMPOSEV6_URL=$(maybe_proxy_url "https://github.com/${REPO}/releases/download/${version}/docker-compose-v6.yml")
+}
+
 # 全局下载地址配置（默认获取最新版本；也可用 VERSION=... 覆盖）
 RESOLVED_VERSION=$(resolve_version) || exit 1
-
-DOCKER_COMPOSEV4_URL=$(maybe_proxy_url "https://github.com/${REPO}/releases/download/${RESOLVED_VERSION}/docker-compose-v4.yml")
-DOCKER_COMPOSEV6_URL=$(maybe_proxy_url "https://github.com/${REPO}/releases/download/${RESOLVED_VERSION}/docker-compose-v6.yml")
+set_compose_urls_by_version "$RESOLVED_VERSION"
 
 
 
@@ -221,6 +226,27 @@ generate_random() {
   LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c16
 }
 
+upsert_env_var() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp_file
+
+  tmp_file=$(mktemp)
+  if [ -f "$file" ]; then
+    awk -v k="$key" -v v="$value" '
+      BEGIN { found=0 }
+      $0 ~ ("^" k "=") { print k "=" v; found=1; next }
+      { print }
+      END { if (!found) print k "=" v }
+    ' "$file" > "$tmp_file"
+  else
+    printf '%s=%s\n' "$key" "$value" > "$tmp_file"
+  fi
+
+  mv "$tmp_file" "$file"
+}
+
 # 删除脚本自身
 delete_self() {
   echo ""
@@ -268,6 +294,7 @@ install_panel() {
 JWT_SECRET=$JWT_SECRET
 FRONTEND_PORT=$FRONTEND_PORT
 BACKEND_PORT=$BACKEND_PORT
+FLUX_VERSION=$RESOLVED_VERSION
 EOF
 
   echo "🚀 启动 docker 服务..."
@@ -287,6 +314,15 @@ EOF
 update_panel() {
   echo "🔄 开始更新面板..."
   check_docker
+
+  echo "🔍 获取最新版本号..."
+  LATEST_VERSION=$(resolve_latest_release_tag) || {
+    echo "❌ 无法获取最新版本号，更新终止"
+    return 1
+  }
+  echo "🆕 最新版本：$LATEST_VERSION"
+  set_compose_urls_by_version "$LATEST_VERSION"
+  upsert_env_var ".env" "FLUX_VERSION" "$LATEST_VERSION"
 
   echo "🔽 下载最新配置文件..."
   DOCKER_COMPOSE_URL=$(get_docker_compose_url)
