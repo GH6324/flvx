@@ -60,17 +60,15 @@ export function isLoggedIn(): boolean {
 /**
  * 权限检查装饰器函数
  * @param fn 要执行的函数
- * @param errorMsg 权限不足时的错误提示
+ * @param _errorMsg 权限不足时的错误提示
  * @returns 包装后的函数
  */
 export function requireAdmin<T extends (...args: any[]) => any>(
   fn: T,
-  errorMsg: string = "权限不足，仅管理员可操作",
+  _errorMsg: string = "权限不足，仅管理员可操作",
 ): T {
   return ((...args: Parameters<T>) => {
     if (!isAdmin()) {
-      console.warn(errorMsg);
-
       return false;
     }
 

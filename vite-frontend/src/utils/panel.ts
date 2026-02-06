@@ -119,7 +119,7 @@ export function validatePanelAddress(address: string): boolean {
     }
 
     return false;
-  } catch (error) {
+  } catch {
     // URL构造函数失败说明格式不正确
     return false;
   }

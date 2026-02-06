@@ -207,8 +207,7 @@ export default function DashboardPage() {
       } else {
         toast.error(res.msg || "获取套餐信息失败");
       }
-    } catch (error) {
-      console.error("获取套餐信息失败:", error);
+    } catch {
       toast.error("获取套餐信息失败");
     } finally {
       setLoading(false);
@@ -648,7 +647,7 @@ export default function DashboardPage() {
     try {
       await navigator.clipboard.writeText(text);
       toast.success(`已复制`);
-    } catch (error) {
+    } catch {
       toast.error("复制失败");
     }
   };
@@ -661,7 +660,7 @@ export default function DashboardPage() {
         ),
       );
       await copyToClipboard(addressItem.address);
-    } catch (error) {
+    } catch {
       toast.error("复制失败");
     } finally {
       setAddressList((prev) =>
@@ -1189,14 +1188,15 @@ export default function DashboardPage() {
                               {forward.name}
                             </h4>
                             <div className="space-y-1">
-                              <code
+                              <button
                                 className={`block px-2 py-1 bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-300 rounded font-mono text-xs truncate ${hasMultipleIps(forward.inIp) ? "cursor-pointer hover:bg-green-200 dark:hover:bg-green-500/30" : ""}`}
+                                disabled={!hasMultipleIps(forward.inIp)}
                                 title={formatInAddress(
                                   forward.inIp,
                                   forward.inPort,
                                 )}
+                                type="button"
                                 onClick={() =>
-                                  hasMultipleIps(forward.inIp) &&
                                   showAddressModal(
                                     forward.inIp,
                                     forward.inPort,
@@ -1205,17 +1205,20 @@ export default function DashboardPage() {
                                 }
                               >
                                 {formatInAddress(forward.inIp, forward.inPort)}
-                              </code>
+                              </button>
                               <div className="text-center text-default-400 text-xs">
                                 ↓
                               </div>
-                              <code
+                              <button
                                 className={`block px-2 py-1 bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 rounded font-mono text-xs truncate ${hasMultipleRemoteAddresses(forward.remoteAddr) ? "cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-500/30" : ""}`}
-                                title={formatRemoteAddress(forward.remoteAddr)}
-                                onClick={() =>
-                                  hasMultipleRemoteAddresses(
+                                disabled={
+                                  !hasMultipleRemoteAddresses(
                                     forward.remoteAddr,
-                                  ) &&
+                                  )
+                                }
+                                title={formatRemoteAddress(forward.remoteAddr)}
+                                type="button"
+                                onClick={() =>
                                   showRemoteAddressModal(
                                     forward.remoteAddr,
                                     "出口地址",
@@ -1223,7 +1226,7 @@ export default function DashboardPage() {
                                 }
                               >
                                 {formatRemoteAddress(forward.remoteAddr)}
-                              </code>
+                              </button>
                             </div>
                           </div>
 

@@ -89,8 +89,7 @@ export default function ChangePasswordPage() {
       } else {
         toast.error(response.msg || "账号密码修改失败");
       }
-    } catch (error) {
-      console.error("修改账号密码错误:", error);
+    } catch {
       toast.error("修改账号密码时发生错误");
     } finally {
       setLoading(false);

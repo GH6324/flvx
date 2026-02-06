@@ -94,10 +94,8 @@ export default function LimitPage() {
       if (tunnelsRes.code === 0) {
         setTunnels(tunnelsRes.data || []);
       } else {
-        console.warn("获取隧道列表失败:", tunnelsRes.msg);
       }
-    } catch (error) {
-      console.error("加载数据失败:", error);
+    } catch {
       toast.error("加载数据失败");
     } finally {
       setLoading(false);
@@ -177,8 +175,7 @@ export default function LimitPage() {
       } else {
         toast.error(res.msg || "删除失败");
       }
-    } catch (error) {
-      console.error("删除失败:", error);
+    } catch {
       toast.error("删除失败");
     } finally {
       setDeleteLoading(false);
@@ -196,7 +193,9 @@ export default function LimitPage() {
       if (isEdit) {
         res = await updateSpeedLimit(form);
       } else {
-        const { id, ...createData } = form;
+        const createData = { ...form };
+
+        delete createData.id;
 
         res = await createSpeedLimit(createData);
       }
@@ -208,8 +207,7 @@ export default function LimitPage() {
       } else {
         toast.error(res.msg || "操作失败");
       }
-    } catch (error) {
-      console.error("提交失败:", error);
+    } catch {
       toast.error("操作失败");
     } finally {
       setSubmitLoading(false);
@@ -233,7 +231,7 @@ export default function LimitPage() {
       <div className="flex items-center justify-between mb-6">
         <div className="flex-1" />
 
-        <Button size="sm" variant="flat" color="primary" onPress={handleAdd}>
+        <Button color="primary" size="sm" variant="flat" onPress={handleAdd}>
           新增
         </Button>
       </div>
@@ -255,8 +253,8 @@ export default function LimitPage() {
                   </div>
                   <Chip
                     color={rule.status === 1 ? "success" : "danger"}
-                    variant="flat"
                     size="sm"
+                    variant="flat"
                   >
                     {rule.status === 1 ? "运行" : "异常"}
                   </Chip>
@@ -291,24 +289,26 @@ export default function LimitPage() {
                 <div className="flex gap-2 mt-4">
                   <Button
                     className="flex-1"
-                      color="primary"
-                      size="sm"
-                      startContent={
-                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                        </svg>
-                      }
-                      variant="flat"
-                      onPress={() => handleEdit(rule)}
+                    color="primary"
+                    size="sm"
+                    startContent={
+                      <svg
+                        className="w-4 h-4"
+                        fill="currentColor"
+                        viewBox="0 0 20 20"
+                      >
+                        <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                      </svg>
+                    }
+                    variant="flat"
+                    onPress={() => handleEdit(rule)}
                   >
                     编辑
                   </Button>
                   <Button
-                    size="sm"
-                    variant="flat"
-                    color="danger"
-                    onPress={() => handleDelete(rule)}
                     className="flex-1"
+                    color="danger"
+                    size="sm"
                     startContent={
                       <svg
                         className="w-4 h-4"
@@ -316,17 +316,19 @@ export default function LimitPage() {
                         viewBox="0 0 20 20"
                       >
                         <path
-                          fillRule="evenodd"
-                          d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"
                           clipRule="evenodd"
+                          d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"
+                          fillRule="evenodd"
                         />
                         <path
-                          fillRule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 012 0v4a1 1 0 11-2 0V7zM12 7a1 1 0 012 0v4a1 1 0 11-2 0V7z"
                           clipRule="evenodd"
+                          d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 012 0v4a1 1 0 11-2 0V7zM12 7a1 1 0 012 0v4a1 1 0 11-2 0V7z"
+                          fillRule="evenodd"
                         />
                       </svg>
                     }
+                    variant="flat"
+                    onPress={() => handleDelete(rule)}
                   >
                     删除
                   </Button>
@@ -348,10 +350,10 @@ export default function LimitPage() {
                   viewBox="0 0 24 24"
                 >
                   <path
+                    d="M12 6v6l4 2m6-6a9 9 0 11-18 0 9 9 0 0118 0z"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={1.5}
-                    d="M12 6v6l4 2m6-6a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
               </div>
@@ -370,12 +372,12 @@ export default function LimitPage() {
 
       {/* 新增/编辑模态框 */}
       <Modal
-        isOpen={modalOpen}
-        onOpenChange={setModalOpen}
-        size="2xl"
-        scrollBehavior="outside"
         backdrop="blur"
+        isOpen={modalOpen}
         placement="center"
+        scrollBehavior="outside"
+        size="2xl"
+        onOpenChange={setModalOpen}
       >
         <ModalContent>
           {(onClose) => (
@@ -394,36 +396,50 @@ export default function LimitPage() {
                 <div className="space-y-4">
                   <Input
                     errorMessage={errors.name}
-                      isInvalid={!!errors.name}
-                      label="规则名称"
-                      placeholder="请输入限速规则名称"
-                      value={form.name}
-                      variant="bordered"
-                      onChange={(e) => setForm(prev => ({ ...prev, name: e.target.value }))}
+                    isInvalid={!!errors.name}
+                    label="规则名称"
+                    placeholder="请输入限速规则名称"
+                    value={form.name}
+                    variant="bordered"
+                    onChange={(e) =>
+                      setForm((prev) => ({ ...prev, name: e.target.value }))
+                    }
                   />
 
                   <Input
                     endContent={
-                        <div className="pointer-events-none flex items-center">
-                          <span className="text-default-400 text-small">Mbps</span>
-                        </div>
-                      }
-                      errorMessage={errors.speed}
-                      isInvalid={!!errors.speed}
-                      label="速度限制"
-                      placeholder="请输入速度限制"
-                      type="number"
-                      value={form.speed.toString()}
-                      variant="bordered"
-                      onChange={(e) => setForm(prev => ({ ...prev, speed: parseInt(e.target.value) || 0 }))}
+                      <div className="pointer-events-none flex items-center">
+                        <span className="text-default-400 text-small">
+                          Mbps
+                        </span>
+                      </div>
+                    }
+                    errorMessage={errors.speed}
+                    isInvalid={!!errors.speed}
+                    label="速度限制"
+                    placeholder="请输入速度限制"
+                    type="number"
+                    value={form.speed.toString()}
+                    variant="bordered"
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        speed: parseInt(e.target.value) || 0,
+                      }))
+                    }
                   />
 
                   <Select
+                    description={isEdit ? "编辑时无法修改绑定隧道" : undefined}
+                    errorMessage={errors.tunnelId}
+                    isDisabled={isEdit}
+                    isInvalid={!!errors.tunnelId}
                     label="绑定隧道"
                     placeholder="请选择要绑定的隧道"
                     selectedKeys={
                       form.tunnelId ? [form.tunnelId.toString()] : []
                     }
+                    variant="bordered"
                     onSelectionChange={(keys) => {
                       const selectedKey = Array.from(keys)[0] as string;
 
@@ -431,6 +447,7 @@ export default function LimitPage() {
                         const selectedTunnel = tunnels.find(
                           (tunnel) => tunnel.id === parseInt(selectedKey),
                         );
+
                         setForm((prev) => ({
                           ...prev,
                           tunnelId: parseInt(selectedKey),
@@ -444,11 +461,6 @@ export default function LimitPage() {
                         }));
                       }
                     }}
-                    isInvalid={!!errors.tunnelId}
-                    errorMessage={errors.tunnelId}
-                    variant="bordered"
-                    isDisabled={isEdit}
-                    description={isEdit ? "编辑时无法修改绑定隧道" : undefined}
                   >
                     {tunnels.map((tunnel) => (
                       <SelectItem key={tunnel.id}>{tunnel.name}</SelectItem>
@@ -462,8 +474,8 @@ export default function LimitPage() {
                 </Button>
                 <Button
                   color="primary"
-                  onPress={handleSubmit}
                   isLoading={submitLoading}
+                  onPress={handleSubmit}
                 >
                   {isEdit ? "保存修改" : "创建规则"}
                 </Button>
@@ -475,12 +487,12 @@ export default function LimitPage() {
 
       {/* 删除确认模态框 */}
       <Modal
-        isOpen={deleteModalOpen}
-        onOpenChange={setDeleteModalOpen}
-        size="2xl"
-        scrollBehavior="outside"
         backdrop="blur"
+        isOpen={deleteModalOpen}
         placement="center"
+        scrollBehavior="outside"
+        size="2xl"
+        onOpenChange={setDeleteModalOpen}
       >
         <ModalContent>
           {(onClose) => (
@@ -492,7 +504,7 @@ export default function LimitPage() {
                 <p className="text-default-600">
                   确定要删除限速规则{" "}
                   <span className="font-semibold text-foreground">
-                    "{ruleToDelete?.name}"
+                    &quot;{ruleToDelete?.name}&quot;
                   </span>{" "}
                   吗？
                 </p>
@@ -506,8 +518,8 @@ export default function LimitPage() {
                 </Button>
                 <Button
                   color="danger"
-                  onPress={confirmDelete}
                   isLoading={deleteLoading}
+                  onPress={confirmDelete}
                 >
                   确认删除
                 </Button>

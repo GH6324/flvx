@@ -126,7 +126,7 @@ export const getCachedConfigs = async (): Promise<Record<string, string>> => {
 
       return configs;
     }
-  } catch (error) {
+  } catch {
     // API失败时返回缓存的数据
     if (hasCachedData) {
       return cachedConfigs;

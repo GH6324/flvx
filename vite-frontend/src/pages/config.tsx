@@ -121,7 +121,7 @@ const getInitialConfigs = (): Record<string, string> => {
         initialConfigs[key] = cachedValue;
       }
     });
-  } catch (error) {}
+  } catch {}
 
   return initialConfigs;
 };
@@ -172,7 +172,7 @@ export default function ConfigPage() {
         setHasChanges(false);
       } else {
       }
-    } catch (error) {
+    } catch {
       // 只有在没有缓存数据时才显示错误
       if (!hasInitialData) {
         toast.error("加载配置出错，请重试");
@@ -250,7 +250,7 @@ export default function ConfigPage() {
       } else {
         toast.error("保存配置失败: " + response.msg);
       }
-    } catch (error) {
+    } catch {
       toast.error("保存配置出错，请重试");
     } finally {
       setSaving(false);

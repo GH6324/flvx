@@ -156,8 +156,7 @@ export default function IndexPage() {
 
       tacInstanceRef.current = new window.TAC(config, style);
       tacInstanceRef.current.init();
-    } catch (error) {
-      console.error("初始化验证码失败:", error);
+    } catch {
       toast.error("验证码初始化失败，请刷新页面重试");
       setShowCaptcha(false);
       setLoading(false);
@@ -202,8 +201,7 @@ export default function IndexPage() {
       // 登录成功
       toast.success("登录成功");
       navigate("/dashboard");
-    } catch (error) {
-      console.error("登录错误:", error);
+    } catch {
       toast.error("网络错误，请稍后重试");
     } finally {
       setLoading(false);
@@ -239,7 +237,6 @@ export default function IndexPage() {
         }, 100);
       }
     } catch (error) {
-      console.error("检查验证码状态错误:", error);
       toast.error("网络错误，请稍后重试" + error);
       setLoading(false);
     }

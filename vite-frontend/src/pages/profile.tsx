@@ -168,9 +168,8 @@ export default function ProfilePage() {
       } else {
         toast.error(response.msg || "密码修改失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("修改密码时发生错误");
-      console.error("修改密码错误:", error);
     } finally {
       setPasswordLoading(false);
     }

@@ -260,9 +260,8 @@ export default function AdminLayout({
       } else {
         toast.error(response.msg || "密码修改失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("修改密码时发生错误");
-      console.error("修改密码错误:", error);
     } finally {
       setPasswordLoading(false);
     }
@@ -289,8 +288,10 @@ export default function AdminLayout({
     >
       {/* 移动端遮罩层 */}
       {isMobile && mobileMenuVisible && (
-        <div
+        <button
+          aria-label="关闭菜单"
           className="fixed inset-0 backdrop-blur-sm bg-white/50 dark:bg-black/30 z-40"
+          type="button"
           onClick={hideMobileMenu}
         />
       )}

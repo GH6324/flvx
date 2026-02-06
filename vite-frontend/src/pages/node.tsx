@@ -266,7 +266,7 @@ export default function NodePage() {
       } else {
         toast.error(res.msg || "加载节点列表失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("网络错误，请重试");
     } finally {
       setLoading(false);
@@ -312,7 +312,7 @@ export default function NodePage() {
           const data = JSON.parse(event.data);
 
           handleWebSocketMessage(data);
-        } catch (error) {
+        } catch {
           // 解析失败时不输出错误信息
         }
       };
@@ -327,7 +327,7 @@ export default function NodePage() {
         setWsConnecting(false);
         attemptReconnect();
       };
-    } catch (error) {
+    } catch {
       setWsConnected(false);
       setWsConnecting(false);
       attemptReconnect();
@@ -413,7 +413,7 @@ export default function NodePage() {
                   uptime: currentUptime,
                 },
               };
-            } catch (error) {
+            } catch {
               return node;
             }
           }
@@ -717,7 +717,7 @@ export default function NodePage() {
       } else {
         toast.error(res.msg || "删除失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("网络错误，请重试");
     } finally {
       setDeleteLoading(false);
@@ -737,7 +737,7 @@ export default function NodePage() {
         try {
           await navigator.clipboard.writeText(res.data);
           toast.success("安装命令已复制到剪贴板");
-        } catch (copyError) {
+        } catch {
           // 复制失败，显示安装命令模态框
           setInstallCommand(res.data);
           setCurrentNodeName(node.name);
@@ -746,7 +746,7 @@ export default function NodePage() {
       } else {
         toast.error(res.msg || "获取安装命令失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("获取安装命令失败");
     } finally {
       setNodeList((prev) =>
@@ -761,7 +761,7 @@ export default function NodePage() {
       await navigator.clipboard.writeText(installCommand);
       toast.success("安装命令已复制到剪贴板");
       setInstallCommandModal(false);
-    } catch (error) {
+    } catch {
       toast.error("复制失败，请手动选择文本复制");
     }
   };
@@ -774,13 +774,13 @@ export default function NodePage() {
 
     try {
       const apiCall = isEdit ? updateNode : createNode;
-      const { serverHost: _serverHost, ...rest } = form;
+      const { serverHost, ...rest } = form;
       const data = {
         ...rest,
         serverIp:
           form.serverIpV4?.trim() ||
           form.serverIpV6?.trim() ||
-          form.serverHost?.trim() ||
+          serverHost?.trim() ||
           "",
       };
 
@@ -821,7 +821,7 @@ export default function NodePage() {
       } else {
         toast.error(res.msg || (isEdit ? "更新失败" : "创建失败"));
       }
-    } catch (error) {
+    } catch {
       toast.error("网络错误，请重试");
     } finally {
       setSubmitLoading(false);
@@ -871,9 +871,7 @@ export default function NodePage() {
     // 保存到 localStorage
     try {
       localStorage.setItem("node-order", JSON.stringify(newOrder));
-    } catch (error) {
-      console.warn("无法保存节点排序到localStorage:", error);
-    }
+    } catch {}
 
     // 持久化到数据库
     try {
@@ -891,8 +889,7 @@ export default function NodePage() {
       } else {
         toast.error("保存排序失败：" + (response.msg || "未知错误"));
       }
-    } catch (error) {
-      console.error("保存节点排序到数据库失败:", error);
+    } catch {
       toast.error("保存排序失败，请重试");
     }
   };
@@ -903,6 +900,7 @@ export default function NodePage() {
       if (prev) {
         setSelectedIds(new Set());
       }
+
       return !prev;
     });
   };
@@ -910,11 +908,13 @@ export default function NodePage() {
   const toggleSelect = (id: number) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
+
       if (next.has(id)) {
         next.delete(id);
       } else {
         next.add(id);
       }
+
       return next;
     });
   };
@@ -932,6 +932,7 @@ export default function NodePage() {
     setBatchLoading(true);
     try {
       const res = await batchDeleteNodes(Array.from(selectedIds));
+
       if (res.code === 0) {
         toast.success(`成功删除 ${selectedIds.size} 个节点`);
         setNodeList((prev) => prev.filter((n) => !selectedIds.has(n.id)));
@@ -941,7 +942,7 @@ export default function NodePage() {
       } else {
         toast.error(res.msg || "删除失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("网络错误，请重试");
     } finally {
       setBatchLoading(false);
@@ -1724,7 +1725,8 @@ export default function NodePage() {
               </ModalHeader>
               <ModalBody>
                 <p>
-                  确定要删除节点 <strong>"{nodeToDelete?.name}"</strong> 吗？
+                  确定要删除节点{" "}
+                  <strong>&quot;{nodeToDelete?.name}&quot;</strong> 吗？
                 </p>
                 <p className="text-small text-default-500">
                   此操作不可恢复，请谨慎操作。
@@ -1818,7 +1820,8 @@ export default function NodePage() {
               </ModalHeader>
               <ModalBody>
                 <p>
-                  确定要删除选中的 <strong>{selectedIds.size}</strong> 个节点吗？
+                  确定要删除选中的 <strong>{selectedIds.size}</strong>{" "}
+                  个节点吗？
                 </p>
                 <p className="text-small text-default-500">
                   此操作不可恢复，请谨慎操作。

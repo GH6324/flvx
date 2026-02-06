@@ -33,9 +33,7 @@ export const Navbar = () => {
           // 同步更新siteConfig
           siteConfig.name = cachedAppName;
         }
-      } catch (error) {
-        console.warn("检查配置更新失败:", error);
-      }
+      } catch {}
     };
 
     // 延迟执行，避免阻塞初始渲染
@@ -50,9 +48,7 @@ export const Navbar = () => {
           setAppName(cachedAppName);
           siteConfig.name = cachedAppName;
         }
-      } catch (error) {
-        console.warn("更新配置失败:", error);
-      }
+      } catch {}
     };
 
     window.addEventListener("configUpdated", handleConfigUpdate);

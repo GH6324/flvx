@@ -148,9 +148,7 @@ function App() {
         if (cachedAppName && cachedAppName !== document.title) {
           document.title = cachedAppName;
         }
-      } catch (error) {
-        console.warn("检查标题更新失败:", error);
-      }
+      } catch {}
     };
 
     // 延迟检查，避免阻塞初始渲染

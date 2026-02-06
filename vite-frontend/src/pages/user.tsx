@@ -229,7 +229,7 @@ export default function UserPage() {
       } else {
         toast.error(response.msg || "获取用户列表失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("获取用户列表失败");
     } finally {
       setLoading(false);
@@ -243,9 +243,7 @@ export default function UserPage() {
       if (response.code === 0) {
         setTunnels(response.data || []);
       }
-    } catch (error) {
-      console.error("获取隧道列表失败:", error);
-    }
+    } catch {}
   };
 
   const loadSpeedLimits = async () => {
@@ -255,9 +253,7 @@ export default function UserPage() {
       if (response.code === 0) {
         setSpeedLimits(response.data || []);
       }
-    } catch (error) {
-      console.error("获取限速规则列表失败:", error);
-    }
+    } catch {}
   };
 
   const loadUserTunnels = async (userId: number) => {
@@ -270,7 +266,7 @@ export default function UserPage() {
       } else {
         toast.error(response.msg || "获取隧道权限列表失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("获取隧道权限列表失败");
     } finally {
       setTunnelListLoading(false);
@@ -332,7 +328,7 @@ export default function UserPage() {
       } else {
         toast.error(response.msg || "删除失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("删除失败");
     }
   };
@@ -366,7 +362,7 @@ export default function UserPage() {
       } else {
         toast.error(response.msg || (isEdit ? "更新失败" : "创建失败"));
       }
-    } catch (error) {
+    } catch {
       toast.error(isEdit ? "更新失败" : "创建失败");
     } finally {
       setUserFormLoading(false);
@@ -406,7 +402,7 @@ export default function UserPage() {
       } else {
         toast.error(response.msg || "分配失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("分配失败");
     } finally {
       setAssignLoading(false);
@@ -445,7 +441,7 @@ export default function UserPage() {
       } else {
         toast.error(response.msg || "更新失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("更新失败");
     } finally {
       setEditTunnelLoading(false);
@@ -473,7 +469,7 @@ export default function UserPage() {
       } else {
         toast.error(response.msg || "删除失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("删除失败");
     }
   };
@@ -502,7 +498,7 @@ export default function UserPage() {
       } else {
         toast.error(response.msg || "重置失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("重置失败");
     } finally {
       setResetFlowLoading(false);
@@ -535,7 +531,7 @@ export default function UserPage() {
       } else {
         toast.error(response.msg || "重置失败");
       }
-    } catch (error) {
+    } catch {
       toast.error("重置失败");
     } finally {
       setResetTunnelFlowLoading(false);
@@ -1005,6 +1001,7 @@ export default function UserPage() {
                       return (
                         <div
                           key={tunnel.id}
+                          aria-disabled={isAssigned}
                           className={`
                             px-4 py-3 rounded-lg border transition-all duration-200 cursor-pointer
                             ${
@@ -1015,9 +1012,21 @@ export default function UserPage() {
                                   : "bg-white dark:bg-default-50 border-default-200 dark:border-default-100/30 hover:border-primary-200 dark:hover:border-primary-500/30 hover:shadow-sm"
                             }
                           `}
+                          role="button"
+                          tabIndex={isAssigned ? -1 : 0}
                           onClick={() =>
                             !isAssigned && toggleTunnelSelection(tunnel.id)
                           }
+                          onKeyDown={(event) => {
+                            if (isAssigned) {
+                              return;
+                            }
+
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              toggleTunnelSelection(tunnel.id);
+                            }
+                          }}
                         >
                           <div className="flex items-center justify-between gap-4">
                             <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -1051,7 +1060,7 @@ export default function UserPage() {
                             </div>
 
                             {isSelected && !isAssigned && (
-                              <div onClick={(e) => e.stopPropagation()}>
+                              <div>
                                 <Select
                                   className="w-36"
                                   classNames={{
@@ -1071,6 +1080,7 @@ export default function UserPage() {
                                       : ["null"]
                                   }
                                   size="sm"
+                                  onClick={(e) => e.stopPropagation()}
                                   onSelectionChange={(keys) => {
                                     const value = Array.from(keys)[0] as string;
 
@@ -1455,7 +1465,7 @@ export default function UserPage() {
                 <p className="text-foreground">
                   确定要删除用户{" "}
                   <span className="font-semibold text-danger">
-                    "{userToDelete?.user}"
+                    &quot;{userToDelete?.user}&quot;
                   </span>{" "}
                   吗？
                 </p>
@@ -1500,7 +1510,7 @@ export default function UserPage() {
                   <span className="font-semibold">{currentUser?.user}</span>{" "}
                   对隧道{" "}
                   <span className="font-semibold text-danger">
-                    "{tunnelToDelete?.tunnelName}"
+                    &quot;{tunnelToDelete?.tunnelName}&quot;
                   </span>{" "}
                   的权限吗？
                 </p>
@@ -1553,7 +1563,7 @@ export default function UserPage() {
                 <p className="text-foreground">
                   确定要重置用户{" "}
                   <span className="font-semibold text-warning">
-                    "{userToReset?.user}"
+                    &quot;{userToReset?.user}&quot;
                   </span>{" "}
                   的流量吗？
                 </p>
@@ -1643,7 +1653,7 @@ export default function UserPage() {
                   <span className="font-semibold">{currentUser?.user}</span>{" "}
                   对隧道{" "}
                   <span className="font-semibold text-warning">
-                    "{tunnelToReset?.tunnelName}"
+                    &quot;{tunnelToReset?.tunnelName}&quot;
                   </span>{" "}
                   的流量吗？
                 </p>

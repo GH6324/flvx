@@ -220,10 +220,8 @@ export default function TunnelPage() {
       if (nodesRes.code === 0) {
         setNodes(nodesRes.data || []);
       } else {
-        console.warn("获取节点列表失败:", nodesRes.msg);
       }
-    } catch (error) {
-      console.error("加载数据失败:", error);
+    } catch {
       toast.error("加载数据失败");
     } finally {
       setLoading(false);
@@ -356,8 +354,7 @@ export default function TunnelPage() {
       } else {
         toast.error(response.msg || "删除失败");
       }
-    } catch (error) {
-      console.error("删除失败:", error);
+    } catch {
       toast.error("删除失败");
     } finally {
       setDeleteLoading(false);
@@ -498,8 +495,7 @@ export default function TunnelPage() {
       } else {
         toast.error(response.msg || (isEdit ? "更新失败" : "创建失败"));
       }
-    } catch (error) {
-      console.error("提交失败:", error);
+    } catch {
       toast.error("网络错误，请重试");
     } finally {
       setSubmitLoading(false);
@@ -537,8 +533,7 @@ export default function TunnelPage() {
           ],
         });
       }
-    } catch (error) {
-      console.error("诊断失败:", error);
+    } catch {
       toast.error("网络错误，请重试");
       setDiagnosisResult({
         tunnelName: tunnel.name,
@@ -627,9 +622,7 @@ export default function TunnelPage() {
     // 保存到 localStorage
     try {
       localStorage.setItem("tunnel-order", JSON.stringify(newOrder));
-    } catch (error) {
-      console.warn("无法保存隧道排序到localStorage:", error);
-    }
+    } catch {}
 
     // 持久化到数据库
     try {
@@ -647,8 +640,7 @@ export default function TunnelPage() {
       } else {
         toast.error("保存排序失败：" + (response.msg || "未知错误"));
       }
-    } catch (error) {
-      console.error("保存隧道排序到数据库失败:", error);
+    } catch {
       toast.error("保存排序失败，请重试");
     }
   };
@@ -662,6 +654,7 @@ export default function TunnelPage() {
 
   const toggleSelect = (id: number) => {
     const newSet = new Set(selectedIds);
+
     if (newSet.has(id)) {
       newSet.delete(id);
     } else {
@@ -672,6 +665,7 @@ export default function TunnelPage() {
 
   const selectAll = () => {
     const allIds = sortedTunnels.map((t) => t.id);
+
     setSelectedIds(new Set(allIds));
   };
 
@@ -684,12 +678,16 @@ export default function TunnelPage() {
     setBatchLoading(true);
     try {
       const res = await batchDeleteTunnels(Array.from(selectedIds));
+
       if (res.code === 0) {
         const result = res.data;
+
         if (result.failCount === 0) {
           toast.success(`成功删除 ${result.successCount} 项`);
         } else {
-          toast.error(`成功 ${result.successCount} 项，失败 ${result.failCount} 项`);
+          toast.error(
+            `成功 ${result.successCount} 项，失败 ${result.failCount} 项`,
+          );
         }
         setSelectedIds(new Set());
         setSelectMode(false);
@@ -710,12 +708,16 @@ export default function TunnelPage() {
     setBatchLoading(true);
     try {
       const res = await batchRedeployTunnels(Array.from(selectedIds));
+
       if (res.code === 0) {
         const result = res.data;
+
         if (result.failCount === 0) {
           toast.success(`成功重新下发 ${result.successCount} 项`);
         } else {
-          toast.error(`成功 ${result.successCount} 项，失败 ${result.failCount} 项`);
+          toast.error(
+            `成功 ${result.successCount} 项，失败 ${result.failCount} 项`,
+          );
         }
         setSelectedIds(new Set());
         setSelectMode(false);
@@ -840,9 +842,9 @@ export default function TunnelPage() {
 
         <div className="flex items-center gap-2">
           <Button
+            color={selectMode ? "warning" : "default"}
             size="sm"
             variant={selectMode ? "solid" : "flat"}
-            color={selectMode ? "warning" : "default"}
             onPress={toggleSelectMode}
           >
             {selectMode ? "退出" : "批量"}
@@ -856,7 +858,9 @@ export default function TunnelPage() {
       {selectMode && selectedIds.size > 0 && (
         <div className="fixed bottom-7 left-1/2 z-50 w-[calc(100vw-1rem)] max-w-max -translate-x-1/2 overflow-x-auto rounded-lg border border-divider bg-content1 p-2 shadow-lg">
           <div className="flex min-w-max items-center gap-2">
-            <span className="text-sm text-default-600 shrink-0">已选择 {selectedIds.size} 项</span>
+            <span className="text-sm text-default-600 shrink-0">
+              已选择 {selectedIds.size} 项
+            </span>
             <Button size="sm" variant="flat" onPress={selectAll}>
               全选
             </Button>
@@ -864,19 +868,19 @@ export default function TunnelPage() {
               清空
             </Button>
             <Button
-              size="sm"
               color="danger"
+              size="sm"
               variant="flat"
               onPress={() => setBatchDeleteModalOpen(true)}
             >
               删除
             </Button>
             <Button
-              size="sm"
               color="primary"
+              isLoading={batchLoading}
+              size="sm"
               variant="flat"
               onPress={handleBatchRedeploy}
-              isLoading={batchLoading}
             >
               下发
             </Button>
@@ -906,9 +910,9 @@ export default function TunnelPage() {
                           <div className="flex justify-between items-start w-full">
                             {selectMode && (
                               <Checkbox
+                                className="mr-2"
                                 isSelected={selectedIds.has(tunnel.id)}
                                 onValueChange={() => toggleSelect(tunnel.id)}
-                                className="mr-2"
                               />
                             )}
                             <div className="flex-1 min-w-0">
@@ -1666,7 +1670,7 @@ export default function TunnelPage() {
                       {getChainGroups().length === 0 && (
                         <div className="text-center py-8 bg-default-50 dark:bg-default-100/50 rounded border border-dashed border-default-300">
                           <p className="text-sm text-default-500">
-                            还没有添加转发链，点击上方"添加一跳"按钮开始添加
+                            还没有添加转发链，点击上方&quot;添加一跳&quot;按钮开始添加
                           </p>
                         </div>
                       )}
@@ -1972,7 +1976,8 @@ export default function TunnelPage() {
               </ModalHeader>
               <ModalBody>
                 <p>
-                  确定要删除隧道 <strong>"{tunnelToDelete?.name}"</strong> 吗？
+                  确定要删除隧道{" "}
+                  <strong>&quot;{tunnelToDelete?.name}&quot;</strong> 吗？
                 </p>
                 <p className="text-small text-default-500">
                   此操作不可恢复，请谨慎操作。
@@ -2512,13 +2517,19 @@ export default function TunnelPage() {
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={batchDeleteModalOpen} onOpenChange={setBatchDeleteModalOpen}>
+      <Modal
+        isOpen={batchDeleteModalOpen}
+        onOpenChange={setBatchDeleteModalOpen}
+      >
         <ModalContent>
           {(onClose) => (
             <>
               <ModalHeader>确认删除</ModalHeader>
               <ModalBody>
-                <p>确定要删除选中的 {selectedIds.size} 项隧道吗？此操作不可撤销，相关转发也将被删除。</p>
+                <p>
+                  确定要删除选中的 {selectedIds.size}{" "}
+                  项隧道吗？此操作不可撤销，相关转发也将被删除。
+                </p>
               </ModalBody>
               <ModalFooter>
                 <Button variant="light" onPress={onClose}>
@@ -2526,8 +2537,8 @@ export default function TunnelPage() {
                 </Button>
                 <Button
                   color="danger"
-                  onPress={handleBatchDelete}
                   isLoading={batchLoading}
+                  onPress={handleBatchDelete}
                 >
                   确认删除
                 </Button>

@@ -224,8 +224,11 @@ export default function ForwardPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchDeleteModalOpen, setBatchDeleteModalOpen] = useState(false);
-  const [batchChangeTunnelModalOpen, setBatchChangeTunnelModalOpen] = useState(false);
-  const [batchTargetTunnelId, setBatchTargetTunnelId] = useState<number | null>(null);
+  const [batchChangeTunnelModalOpen, setBatchChangeTunnelModalOpen] =
+    useState(false);
+  const [batchTargetTunnelId, setBatchTargetTunnelId] = useState<number | null>(
+    null,
+  );
   const [batchLoading, setBatchLoading] = useState(false);
 
   useEffect(() => {
@@ -268,9 +271,7 @@ export default function ForwardPage() {
           // 同步到localStorage
           try {
             localStorage.setItem("forward-order", JSON.stringify(dbOrder));
-          } catch (error) {
-            console.warn("无法保存排序到localStorage:", error);
-          }
+          } catch {}
         } else {
           // 使用本地存储的顺序
           const savedOrder = localStorage.getItem("forward-order");
@@ -296,9 +297,7 @@ export default function ForwardPage() {
           }
         }
       }
-    } catch (error) {
-      console.warn("无法保存显示模式到localStorage:", error);
-    }
+    } catch {}
   };
 
   // 加载所有数据
@@ -347,9 +346,7 @@ export default function ForwardPage() {
             // 同步到localStorage
             try {
               localStorage.setItem("forward-order", JSON.stringify(dbOrder));
-            } catch (error) {
-              console.warn("无法保存排序到localStorage:", error);
-            }
+            } catch {}
           } else {
             // 使用本地存储的顺序
             const savedOrder = localStorage.getItem("forward-order");
@@ -384,10 +381,8 @@ export default function ForwardPage() {
       if (tunnelsRes.code === 0) {
         setTunnels(tunnelsRes.data || []);
       } else {
-        console.warn("获取隧道列表失败:", tunnelsRes.msg);
       }
-    } catch (error) {
-      console.error("加载数据失败:", error);
+    } catch {
       toast.error("加载数据失败");
     } finally {
       setLoading(false);
@@ -566,8 +561,7 @@ export default function ForwardPage() {
           }
         }
       }
-    } catch (error) {
-      console.error("删除失败:", error);
+    } catch {
       toast.error("删除失败");
     } finally {
       setDeleteLoading(false);
@@ -628,8 +622,7 @@ export default function ForwardPage() {
       } else {
         toast.error(res.msg || "操作失败");
       }
-    } catch (error) {
-      console.error("提交失败:", error);
+    } catch {
       toast.error("操作失败");
     } finally {
       setSubmitLoading(false);
@@ -679,14 +672,13 @@ export default function ForwardPage() {
         );
         toast.error(res.msg || "操作失败");
       }
-    } catch (error) {
+    } catch {
       // 操作失败，恢复UI状态
       setForwards((prev) =>
         prev.map((f) =>
           f.id === forward.id ? { ...f, serviceRunning: !targetState } : f,
         ),
       );
-      console.error("服务开关操作失败:", error);
       toast.error("网络错误，操作失败");
     }
   };
@@ -720,8 +712,7 @@ export default function ForwardPage() {
           ],
         });
       }
-    } catch (error) {
-      console.error("诊断失败:", error);
+    } catch {
       toast.error("网络错误，请重试");
       setDiagnosisResult({
         forwardName: forward.name,
@@ -914,7 +905,7 @@ export default function ForwardPage() {
     try {
       await navigator.clipboard.writeText(text);
       toast.success(`已复制${label}`);
-    } catch (error) {
+    } catch {
       toast.error("复制失败");
     }
   };
@@ -928,7 +919,7 @@ export default function ForwardPage() {
         ),
       );
       await copyToClipboard(addressItem.address, "地址");
-    } catch (error) {
+    } catch {
       toast.error("复制失败");
     } finally {
       setAddressList((prev) =>
@@ -1001,8 +992,7 @@ export default function ForwardPage() {
       const exportText = exportLines.join("\n");
 
       setExportData(exportText);
-    } catch (error) {
-      console.error("导出失败:", error);
+    } catch {
       toast.error("导出失败");
     } finally {
       setExportLoading(false);
@@ -1145,7 +1135,7 @@ export default function ForwardPage() {
               ...prev,
             ]);
           }
-        } catch (error) {
+        } catch {
           setImportResults((prev) => [
             {
               line,
@@ -1161,8 +1151,7 @@ export default function ForwardPage() {
 
       // 导入完成后刷新转发列表
       await loadData(false);
-    } catch (error) {
-      console.error("导入失败:", error);
+    } catch {
       toast.error("导入过程中发生错误");
     } finally {
       setImportLoading(false);
@@ -1234,9 +1223,7 @@ export default function ForwardPage() {
       // 保存到localStorage
       try {
         localStorage.setItem("forward-order", JSON.stringify(newOrder));
-      } catch (error) {
-        console.warn("无法保存排序到localStorage:", error);
-      }
+      } catch {}
 
       // 持久化到数据库
       try {
@@ -1267,8 +1254,7 @@ export default function ForwardPage() {
         } else {
           toast.error("保存排序失败：" + (response.msg || "未知错误"));
         }
-      } catch (error) {
-        console.error("保存排序到数据库失败:", error);
+      } catch {
         toast.error("保存排序失败，请重试");
       }
     }
@@ -1283,6 +1269,7 @@ export default function ForwardPage() {
 
   const toggleSelect = (id: number) => {
     const newSet = new Set(selectedIds);
+
     if (newSet.has(id)) {
       newSet.delete(id);
     } else {
@@ -1293,6 +1280,7 @@ export default function ForwardPage() {
 
   const selectAll = () => {
     const allIds = sortedForwards.map((f) => f.id);
+
     setSelectedIds(new Set(allIds));
   };
 
@@ -1305,12 +1293,16 @@ export default function ForwardPage() {
     setBatchLoading(true);
     try {
       const res = await batchDeleteForwards(Array.from(selectedIds));
+
       if (res.code === 0) {
         const result = res.data;
+
         if (result.failCount === 0) {
           toast.success(`成功删除 ${result.successCount} 项`);
         } else {
-          toast.error(`成功 ${result.successCount} 项，失败 ${result.failCount} 项`);
+          toast.error(
+            `成功 ${result.successCount} 项，失败 ${result.failCount} 项`,
+          );
         }
         setSelectedIds(new Set());
         setSelectMode(false);
@@ -1334,8 +1326,10 @@ export default function ForwardPage() {
       const res = enable
         ? await batchResumeForwards(ids)
         : await batchPauseForwards(ids);
+
       if (res.code === 0) {
         const result = res.data;
+
         if (result.failCount === 0) {
           toast.success(
             enable
@@ -1343,7 +1337,9 @@ export default function ForwardPage() {
               : `成功停用 ${result.successCount} 项`,
           );
         } else {
-          toast.error(`成功 ${result.successCount} 项，失败 ${result.failCount} 项`);
+          toast.error(
+            `成功 ${result.successCount} 项，失败 ${result.failCount} 项`,
+          );
         }
         setSelectedIds(new Set());
         setSelectMode(false);
@@ -1363,12 +1359,16 @@ export default function ForwardPage() {
     setBatchLoading(true);
     try {
       const res = await batchRedeployForwards(Array.from(selectedIds));
+
       if (res.code === 0) {
         const result = res.data;
+
         if (result.failCount === 0) {
           toast.success(`成功重新下发 ${result.successCount} 项`);
         } else {
-          toast.error(`成功 ${result.successCount} 项，失败 ${result.failCount} 项`);
+          toast.error(
+            `成功 ${result.successCount} 项，失败 ${result.failCount} 项`,
+          );
         }
         setSelectedIds(new Set());
         setSelectMode(false);
@@ -1391,12 +1391,16 @@ export default function ForwardPage() {
         forwardIds: Array.from(selectedIds),
         targetTunnelId: batchTargetTunnelId,
       });
+
       if (res.code === 0) {
         const result = res.data;
+
         if (result.failCount === 0) {
           toast.success(`成功换隧道 ${result.successCount} 项`);
         } else {
-          toast.error(`成功 ${result.successCount} 项，失败 ${result.failCount} 项`);
+          toast.error(
+            `成功 ${result.successCount} 项，失败 ${result.failCount} 项`,
+          );
         }
         setSelectedIds(new Set());
         setSelectMode(false);
@@ -1501,11 +1505,6 @@ export default function ForwardPage() {
 
   // 可拖拽的转发卡片组件
   const SortableForwardCard = ({ forward }: { forward: Forward }) => {
-    // 确保 forward 对象有效
-    if (!forward || !forward.id) {
-      return null;
-    }
-
     const {
       attributes,
       listeners,
@@ -1543,9 +1542,9 @@ export default function ForwardPage() {
           <div className="flex justify-between items-start w-full">
             {selectMode && (
               <Checkbox
+                className="mr-2"
                 isSelected={selectedIds.has(forward.id)}
                 onValueChange={() => toggleSelect(forward.id)}
-                className="mr-2"
               />
             )}
             <div className="flex-1 min-w-0">
@@ -1560,12 +1559,12 @@ export default function ForwardPage() {
               {viewMode === "direct" && (
                 <div
                   className={`cursor-grab active:cursor-grabbing p-2 text-default-400 hover:text-default-600 transition-colors touch-manipulation ${
-                    isMobile 
-                      ? 'opacity-100' // 移动端始终显示
-                      : 'opacity-0 group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100'
+                    isMobile
+                      ? "opacity-100" // 移动端始终显示
+                      : "opacity-0 group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                   }`}
                   {...listeners}
-                  style={{ touchAction: 'none' }}
+                  style={{ touchAction: "none" }}
                   title={isMobile ? "长按拖拽排序" : "拖拽排序"}
                 >
                   <svg
@@ -1584,8 +1583,8 @@ export default function ForwardPage() {
                 onValueChange={() => handleServiceToggle(forward)}
               />
               <Chip
-                className="text-xs" 
-                color={statusDisplay.color as any} 
+                className="text-xs"
+                color={statusDisplay.color as any}
                 size="sm"
                 variant="flat"
               >
@@ -1599,12 +1598,17 @@ export default function ForwardPage() {
           <div className="space-y-2">
             {/* 地址信息 */}
             <div className="space-y-1">
-              <div
+              <button
                 className={`cursor-pointer px-2 py-1 bg-default-50 dark:bg-default-100/50 rounded border border-default-200 dark:border-default-300 transition-colors duration-200 ${
-                  hasMultipleAddresses(forward.inIp) ? 'hover:bg-default-100 dark:hover:bg-default-200/50' : ''
+                  hasMultipleAddresses(forward.inIp)
+                    ? "hover:bg-default-100 dark:hover:bg-default-200/50"
+                    : ""
                 }`}
                 title={formatInAddress(forward.inIp, forward.inPort)}
-                onClick={() => showAddressModal(forward.inIp, forward.inPort, '入口端口')}
+                type="button"
+                onClick={() =>
+                  showAddressModal(forward.inIp, forward.inPort, "入口端口")
+                }
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -1623,22 +1627,27 @@ export default function ForwardPage() {
                       viewBox="0 0 24 24"
                     >
                       <path
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         strokeWidth={2}
-                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
                       />
                     </svg>
                   )}
                 </div>
-              </div>
+              </button>
 
-              <div
+              <button
                 className={`cursor-pointer px-2 py-1 bg-default-50 dark:bg-default-100/50 rounded border border-default-200 dark:border-default-300 transition-colors duration-200 ${
-                  hasMultipleAddresses(forward.remoteAddr) ? 'hover:bg-default-100 dark:hover:bg-default-200/50' : ''
+                  hasMultipleAddresses(forward.remoteAddr)
+                    ? "hover:bg-default-100 dark:hover:bg-default-200/50"
+                    : ""
                 }`}
                 title={formatRemoteAddress(forward.remoteAddr)}
-                onClick={() => showAddressModal(forward.remoteAddr, null, '目标地址')}
+                type="button"
+                onClick={() =>
+                  showAddressModal(forward.remoteAddr, null, "目标地址")
+                }
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -1657,42 +1666,42 @@ export default function ForwardPage() {
                       viewBox="0 0 24 24"
                     >
                       <path
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         strokeWidth={2}
-                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
                       />
                     </svg>
                   )}
                 </div>
-              </div>
+              </button>
             </div>
 
             {/* 统计信息 */}
             <div className="flex items-center justify-between pt-2 border-t border-divider">
               <Chip
-                color={strategyDisplay.color as any}
-                variant="flat"
-                size="sm"
                 className="text-xs"
+                color={strategyDisplay.color as any}
+                size="sm"
+                variant="flat"
               >
                 {strategyDisplay.text}
               </Chip>
               <div className="flex items-center gap-1">
                 <Chip
-                  variant="flat"
-                  size="sm"
                   className="text-xs"
                   color="primary"
+                  size="sm"
+                  variant="flat"
                 >
                   ↑{formatFlow(forward.inFlow || 0)}
                 </Chip>
               </div>
               <Chip
-                variant="flat"
-                size="sm"
                 className="text-xs"
                 color="success"
+                size="sm"
+                variant="flat"
               >
                 ↓{formatFlow(forward.outFlow || 0)}
               </Chip>
@@ -1705,7 +1714,11 @@ export default function ForwardPage() {
               color="primary"
               size="sm"
               startContent={
-                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                <svg
+                  className="w-3 h-3"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
                   <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
                 </svg>
               }
@@ -1719,8 +1732,16 @@ export default function ForwardPage() {
               color="warning"
               size="sm"
               startContent={
-                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                <svg
+                  className="w-3 h-3"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    clipRule="evenodd"
+                    d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                    fillRule="evenodd"
+                  />
                 </svg>
               }
               variant="flat"
@@ -1733,9 +1754,21 @@ export default function ForwardPage() {
               color="danger"
               size="sm"
               startContent={
-                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" clipRule="evenodd" />
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 012 0v4a1 1 0 11-2 0V7zM12 7a1 1 0 012 0v4a1 1 0 11-2 0V7z" clipRule="evenodd" />
+                <svg
+                  className="w-3 h-3"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    clipRule="evenodd"
+                    d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"
+                    fillRule="evenodd"
+                  />
+                  <path
+                    clipRule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 012 0v4a1 1 0 11-2 0V7zM12 7a1 1 0 012 0v4a1 1 0 11-2 0V7z"
+                    fillRule="evenodd"
+                  />
                 </svg>
               }
               variant="flat"
@@ -1766,24 +1799,24 @@ export default function ForwardPage() {
     <div className="px-3 lg:px-6 py-8">
       {/* 页面头部 */}
       <div className="flex items-center justify-between mb-6 gap-2">
-        <div className="flex-1"></div>
+        <div className="flex-1" />
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
           {/* 显示模式切换按钮 */}
           <Button
             isIconOnly
-              className="text-sm"
-              color="default"
-              size="sm"
-              title={viewMode === 'grouped' ? '切换到直接显示' : '切换到分类显示'}
-              variant="flat"
-              onPress={handleViewModeChange}
+            className="text-sm"
+            color="default"
+            size="sm"
+            title={viewMode === "grouped" ? "切换到直接显示" : "切换到分类显示"}
+            variant="flat"
+            onPress={handleViewModeChange}
           >
             {viewMode === "grouped" ? (
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                 <path
-                  fillRule="evenodd"
-                  d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2zM3 16a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2z"
                   clipRule="evenodd"
+                  d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2zM3 16a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2z"
+                  fillRule="evenodd"
                 />
               </svg>
             ) : (
@@ -1796,34 +1829,34 @@ export default function ForwardPage() {
           {/* 导入按钮 */}
           <Button
             color="warning"
-              size="sm"
-              variant="flat"
-              onPress={handleImport}
+            size="sm"
+            variant="flat"
+            onPress={handleImport}
           >
             导入
           </Button>
 
           {/* 导出按钮 */}
           <Button
+            color="success"
+            isLoading={exportLoading}
             size="sm"
             variant="flat"
-            color="success"
             onPress={handleExport}
-            isLoading={exportLoading}
           >
             导出
           </Button>
 
           <Button
+            color={selectMode ? "warning" : "default"}
             size="sm"
             variant={selectMode ? "solid" : "flat"}
-            color={selectMode ? "warning" : "default"}
             onPress={toggleSelectMode}
           >
             {selectMode ? "退出" : "批量"}
           </Button>
 
-          <Button size="sm" variant="flat" color="primary" onPress={handleAdd}>
+          <Button color="primary" size="sm" variant="flat" onPress={handleAdd}>
             新增
           </Button>
         </div>
@@ -1832,7 +1865,9 @@ export default function ForwardPage() {
       {selectMode && selectedIds.size > 0 && (
         <div className="fixed bottom-7 left-1/2 z-50 w-[calc(100vw-1rem)] max-w-max -translate-x-1/2 overflow-x-auto rounded-lg border border-divider bg-content1 p-2 shadow-lg">
           <div className="flex min-w-max items-center gap-2">
-            <span className="text-sm text-default-600 shrink-0">已选择 {selectedIds.size} 项</span>
+            <span className="text-sm text-default-600 shrink-0">
+              已选择 {selectedIds.size} 项
+            </span>
             <Button size="sm" variant="flat" onPress={selectAll}>
               全选
             </Button>
@@ -1840,43 +1875,43 @@ export default function ForwardPage() {
               清空
             </Button>
             <Button
-              size="sm"
               color="danger"
+              size="sm"
               variant="flat"
               onPress={() => setBatchDeleteModalOpen(true)}
             >
               删除
             </Button>
             <Button
-              size="sm"
               color="warning"
+              isLoading={batchLoading}
+              size="sm"
               variant="flat"
               onPress={() => handleBatchToggleService(false)}
-              isLoading={batchLoading}
             >
               停用
             </Button>
             <Button
-              size="sm"
               color="success"
+              isLoading={batchLoading}
+              size="sm"
               variant="flat"
               onPress={() => handleBatchToggleService(true)}
-              isLoading={batchLoading}
             >
               启用
             </Button>
             <Button
-              size="sm"
               color="primary"
+              isLoading={batchLoading}
+              size="sm"
               variant="flat"
               onPress={handleBatchRedeploy}
-              isLoading={batchLoading}
             >
               下发
             </Button>
             <Button
-              size="sm"
               color="secondary"
+              size="sm"
               variant="flat"
               onPress={() => setBatchChangeTunnelModalOpen(true)}
             >
@@ -1906,9 +1941,9 @@ export default function ForwardPage() {
                           viewBox="0 0 20 20"
                         >
                           <path
-                            fillRule="evenodd"
-                            d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
                             clipRule="evenodd"
+                            d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
+                            fillRule="evenodd"
                           />
                         </svg>
                       </div>
@@ -1927,10 +1962,10 @@ export default function ForwardPage() {
                       </div>
                     </div>
                     <Chip
-                      color="primary"
-                      variant="flat"
-                      size="sm"
                       className="text-xs flex-shrink-0 ml-2"
+                      color="primary"
+                      size="sm"
+                      variant="flat"
                     >
                       用户
                     </Chip>
@@ -1943,6 +1978,7 @@ export default function ForwardPage() {
                       <AccordionItem
                         key={tunnelGroup.tunnelId}
                         aria-label={tunnelGroup.tunnelName}
+                        className="shadow-none border border-divider"
                         title={
                           <div className="flex items-center justify-between w-full min-w-0 pr-4">
                             <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -1954,10 +1990,10 @@ export default function ForwardPage() {
                                   viewBox="0 0 24 24"
                                 >
                                   <path
+                                    d="M13 10V3L4 14h7v7l9-11h-7z"
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                     strokeWidth={2}
-                                    d="M13 10V3L4 14h7v7l9-11h-7z"
                                   />
                                 </svg>
                               </div>
@@ -1969,9 +2005,9 @@ export default function ForwardPage() {
                             </div>
                             <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                               <Chip
-                                variant="flat"
-                                size="sm"
                                 className="text-xs"
+                                size="sm"
+                                variant="flat"
                               >
                                 {
                                   tunnelGroup.forwards.filter(
@@ -1983,7 +2019,6 @@ export default function ForwardPage() {
                             </div>
                           </div>
                         }
-                        className="shadow-none border border-divider"
                       >
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 p-4">
                           {tunnelGroup.forwards.map((forward) =>
@@ -2010,10 +2045,10 @@ export default function ForwardPage() {
                     viewBox="0 0 24 24"
                   >
                     <path
+                      d="M8 9l4-4 4 4m0 6l-4 4-4-4"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={1.5}
-                      d="M8 9l4-4 4 4m0 6l-4 4-4-4"
                     />
                   </svg>
                 </div>
@@ -2033,9 +2068,9 @@ export default function ForwardPage() {
       forwards.length > 0 ? (
         <DndContext
           collisionDetection={closestCenter}
-              sensors={sensors}
-              onDragEnd={handleDragEnd}
-              onDragStart={() => {}} // 添加空的 onDragStart 处理器
+          sensors={sensors}
+          onDragEnd={handleDragEnd}
+          onDragStart={() => {}} // 添加空的 onDragStart 处理器
         >
           <SortableContext
             items={sortableForwardIds}
@@ -2063,10 +2098,10 @@ export default function ForwardPage() {
                   viewBox="0 0 24 24"
                 >
                   <path
+                    d="M8 9l4-4 4 4m0 6l-4 4-4-4"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={1.5}
-                    d="M8 9l4-4 4 4m0 6l-4 4-4-4"
                   />
                 </svg>
               </div>
@@ -2086,11 +2121,11 @@ export default function ForwardPage() {
       {/* 新增/编辑模态框 */}
       <Modal
         backdrop="blur"
-          isOpen={modalOpen}
-          placement="center"
-          scrollBehavior="outside"
-          size="2xl"
-          onOpenChange={setModalOpen}
+        isOpen={modalOpen}
+        placement="center"
+        scrollBehavior="outside"
+        size="2xl"
+        onOpenChange={setModalOpen}
       >
         <ModalContent>
           {(onClose) => (
@@ -2107,28 +2142,37 @@ export default function ForwardPage() {
                 <div className="space-y-4 pb-4">
                   <Input
                     errorMessage={errors.name}
-                      isInvalid={!!errors.name}
-                      label="转发名称"
-                      placeholder="请输入转发名称"
-                      value={form.name}
-                      variant="bordered"
-                      onChange={(e) => setForm(prev => ({ ...prev, name: e.target.value }))}
+                    isInvalid={!!errors.name}
+                    label="转发名称"
+                    placeholder="请输入转发名称"
+                    value={form.name}
+                    variant="bordered"
+                    onChange={(e) =>
+                      setForm((prev) => ({ ...prev, name: e.target.value }))
+                    }
                   />
 
                   <Select
-                    description={isEdit ? "更改隧道将释放原端口并在新隧道分配端口" : undefined}
-                      errorMessage={errors.tunnelId}
-                      isInvalid={!!errors.tunnelId}
-                      label="选择隧道"
-                      placeholder="请选择关联的隧道"
-                      selectedKeys={form.tunnelId ? [form.tunnelId.toString()] : []}
-                      variant="bordered"
-                      onSelectionChange={(keys) => {
-                        const selectedKey = Array.from(keys)[0] as string;
-                        if (selectedKey) {
-                          handleTunnelChange(selectedKey);
-                        }
-                      }}
+                    description={
+                      isEdit
+                        ? "更改隧道将释放原端口并在新隧道分配端口"
+                        : undefined
+                    }
+                    errorMessage={errors.tunnelId}
+                    isInvalid={!!errors.tunnelId}
+                    label="选择隧道"
+                    placeholder="请选择关联的隧道"
+                    selectedKeys={
+                      form.tunnelId ? [form.tunnelId.toString()] : []
+                    }
+                    variant="bordered"
+                    onSelectionChange={(keys) => {
+                      const selectedKey = Array.from(keys)[0] as string;
+
+                      if (selectedKey) {
+                        handleTunnelChange(selectedKey);
+                      }
+                    }}
                   >
                     {tunnels.map((tunnel) => (
                       <SelectItem key={tunnel.id}>{tunnel.name}</SelectItem>
@@ -2137,51 +2181,53 @@ export default function ForwardPage() {
 
                   <Input
                     description="指定入口端口，留空则从节点可用端口中自动分配"
-                      errorMessage={errors.inPort}
-                      isInvalid={!!errors.inPort}
-                      label="入口端口"
-                      placeholder="留空则自动分配可用端口"
-                      type="number"
-                      value={form.inPort !== null ? form.inPort.toString() : ''}
-                      variant="bordered"
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setForm(prev => ({ 
-                          ...prev, 
-                          inPort: value ? parseInt(value) : null
-                        }));
-                      }}
+                    errorMessage={errors.inPort}
+                    isInvalid={!!errors.inPort}
+                    label="入口端口"
+                    placeholder="留空则自动分配可用端口"
+                    type="number"
+                    value={form.inPort !== null ? form.inPort.toString() : ""}
+                    variant="bordered"
+                    onChange={(e) => {
+                      const value = e.target.value;
+
+                      setForm((prev) => ({
+                        ...prev,
+                        inPort: value ? parseInt(value) : null,
+                      }));
+                    }}
                   />
 
                   <Textarea
+                    description="格式: IP:端口 或 域名:端口，支持多个地址（每行一个）"
+                    errorMessage={errors.remoteAddr}
+                    isInvalid={!!errors.remoteAddr}
                     label="远程地址"
+                    maxRows={6}
+                    minRows={3}
                     placeholder="请输入远程地址，多个地址用换行分隔&#10;例如:&#10;192.168.1.100:8080&#10;example.com:3000"
                     value={form.remoteAddr}
+                    variant="bordered"
                     onChange={(e) =>
                       setForm((prev) => ({
                         ...prev,
                         remoteAddr: e.target.value,
                       }))
                     }
-                    isInvalid={!!errors.remoteAddr}
-                    errorMessage={errors.remoteAddr}
-                    variant="bordered"
-                    description="格式: IP:端口 或 域名:端口，支持多个地址（每行一个）"
-                    minRows={3}
-                    maxRows={6}
                   />
 
                   {getAddressCount(form.remoteAddr) > 1 && (
                     <Select
                       description="多个目标地址的负载均衡策略"
-                        label="负载策略"
-                        placeholder="请选择负载均衡策略"
-                        selectedKeys={[form.strategy]}
-                        variant="bordered"
-                        onSelectionChange={(keys) => {
-                          const selectedKey = Array.from(keys)[0] as string;
-                          setForm(prev => ({ ...prev, strategy: selectedKey }));
-                        }}
+                      label="负载策略"
+                      placeholder="请选择负载均衡策略"
+                      selectedKeys={[form.strategy]}
+                      variant="bordered"
+                      onSelectionChange={(keys) => {
+                        const selectedKey = Array.from(keys)[0] as string;
+
+                        setForm((prev) => ({ ...prev, strategy: selectedKey }));
+                      }}
                     >
                       <SelectItem key="fifo">主备模式 - 自上而下</SelectItem>
                       <SelectItem key="round">轮询模式 - 依次轮换</SelectItem>
@@ -2197,8 +2243,8 @@ export default function ForwardPage() {
                 </Button>
                 <Button
                   color="primary"
-                  onPress={handleSubmit}
                   isLoading={submitLoading}
+                  onPress={handleSubmit}
                 >
                   {isEdit ? "保存修改" : "创建转发"}
                 </Button>
@@ -2211,8 +2257,8 @@ export default function ForwardPage() {
       {/* 删除确认模态框 */}
       <Modal
         backdrop="blur"
-          isOpen={deleteModalOpen}
-          placement="center"
+        isOpen={deleteModalOpen}
+        placement="center"
         scrollBehavior="outside"
         size="2xl"
         onOpenChange={setDeleteModalOpen}
@@ -2227,7 +2273,7 @@ export default function ForwardPage() {
                 <p className="text-default-600">
                   确定要删除转发{" "}
                   <span className="font-semibold text-foreground">
-                    "{forwardToDelete?.name}"
+                    &quot;{forwardToDelete?.name}&quot;
                   </span>{" "}
                   吗？
                 </p>
@@ -2241,8 +2287,8 @@ export default function ForwardPage() {
                 </Button>
                 <Button
                   color="danger"
-                  onPress={confirmDelete}
                   isLoading={deleteLoading}
+                  onPress={confirmDelete}
                 >
                   确认删除
                 </Button>
@@ -2255,9 +2301,9 @@ export default function ForwardPage() {
       {/* 地址列表弹窗 */}
       <Modal
         isOpen={addressModalOpen}
-        onClose={() => setAddressModalOpen(false)}
-        size="lg"
         scrollBehavior="outside"
+        size="lg"
+        onClose={() => setAddressModalOpen(false)}
       >
         <ModalContent>
           <ModalHeader className="text-base">{addressModalTitle}</ModalHeader>
@@ -2278,9 +2324,9 @@ export default function ForwardPage() {
                     {item.address}
                   </code>
                   <Button
+                    isLoading={item.copying}
                     size="sm"
                     variant="light"
-                    isLoading={item.copying}
                     onClick={() => copyAddress(item)}
                   >
                     复制
@@ -2294,16 +2340,16 @@ export default function ForwardPage() {
 
       {/* 导出数据模态框 */}
       <Modal
+        backdrop="blur"
         isOpen={exportModalOpen}
+        placement="center"
+        scrollBehavior="outside"
+        size="2xl"
         onClose={() => {
           setExportModalOpen(false);
           setSelectedTunnelForExport(null);
           setExportData("");
         }}
-        size="2xl"
-        scrollBehavior="outside"
-        backdrop="blur"
-        placement="center"
       >
         <ModalContent>
           <ModalHeader className="flex flex-col gap-1">
@@ -2318,14 +2364,21 @@ export default function ForwardPage() {
               <div>
                 <Select
                   isRequired
-                    label="选择导出隧道"
-                    placeholder="请选择要导出的隧道"
-                    selectedKeys={selectedTunnelForExport ? [selectedTunnelForExport.toString()] : []}
-                    variant="bordered"
-                    onSelectionChange={(keys) => {
-                      const selectedKey = Array.from(keys)[0] as string;
-                      setSelectedTunnelForExport(selectedKey ? parseInt(selectedKey) : null);
-                    }}
+                  label="选择导出隧道"
+                  placeholder="请选择要导出的隧道"
+                  selectedKeys={
+                    selectedTunnelForExport
+                      ? [selectedTunnelForExport.toString()]
+                      : []
+                  }
+                  variant="bordered"
+                  onSelectionChange={(keys) => {
+                    const selectedKey = Array.from(keys)[0] as string;
+
+                    setSelectedTunnelForExport(
+                      selectedKey ? parseInt(selectedKey) : null,
+                    );
+                  }}
                 >
                   {tunnels.map((tunnel) => (
                     <SelectItem
@@ -2343,10 +2396,9 @@ export default function ForwardPage() {
                 <div className="flex justify-between items-center">
                   <Button
                     color="primary"
-                    size="sm"
-                    onPress={executeExport}
-                    isLoading={exportLoading}
                     isDisabled={!selectedTunnelForExport}
+                    isLoading={exportLoading}
+                    size="sm"
                     startContent={
                       <svg
                         className="w-4 h-4"
@@ -2354,19 +2406,19 @@ export default function ForwardPage() {
                         viewBox="0 0 20 20"
                       >
                         <path
-                          fillRule="evenodd"
-                          d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"
                           clipRule="evenodd"
+                          d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"
+                          fillRule="evenodd"
                         />
                       </svg>
                     }
+                    onPress={executeExport}
                   >
                     重新生成
                   </Button>
                   <Button
                     color="secondary"
                     size="sm"
-                    onPress={copyExportData}
                     startContent={
                       <svg
                         className="w-4 h-4"
@@ -2377,6 +2429,7 @@ export default function ForwardPage() {
                         <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
                       </svg>
                     }
+                    onPress={copyExportData}
                   >
                     复制
                   </Button>
@@ -2388,10 +2441,9 @@ export default function ForwardPage() {
                 <div className="text-right">
                   <Button
                     color="primary"
-                    size="sm"
-                    onPress={executeExport}
-                    isLoading={exportLoading}
                     isDisabled={!selectedTunnelForExport}
+                    isLoading={exportLoading}
+                    size="sm"
                     startContent={
                       <svg
                         className="w-4 h-4"
@@ -2399,12 +2451,13 @@ export default function ForwardPage() {
                         viewBox="0 0 20 20"
                       >
                         <path
-                          fillRule="evenodd"
-                          d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"
                           clipRule="evenodd"
+                          d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"
+                          fillRule="evenodd"
                         />
                       </svg>
                     }
+                    onPress={executeExport}
                   >
                     生成导出数据
                   </Button>
@@ -2416,15 +2469,15 @@ export default function ForwardPage() {
                 <div className="relative">
                   <Textarea
                     readOnly
-                      className="font-mono text-sm"
-                      classNames={{
-                        input: "font-mono text-sm"
-                      }}
-                      maxRows={20}
-                      minRows={10}
-                      placeholder="暂无数据"
-                      value={exportData}
-                      variant="bordered"
+                    className="font-mono text-sm"
+                    classNames={{
+                      input: "font-mono text-sm",
+                    }}
+                    maxRows={20}
+                    minRows={10}
+                    placeholder="暂无数据"
+                    value={exportData}
+                    variant="bordered"
                   />
                 </div>
               )}
@@ -2440,12 +2493,12 @@ export default function ForwardPage() {
 
       {/* 导入数据模态框 */}
       <Modal
-        isOpen={importModalOpen}
-        onClose={() => setImportModalOpen(false)}
-        size="2xl"
-        scrollBehavior="outside"
         backdrop="blur"
+        isOpen={importModalOpen}
         placement="center"
+        scrollBehavior="outside"
+        size="2xl"
+        onClose={() => setImportModalOpen(false)}
       >
         <ModalContent>
           <ModalHeader className="flex flex-col gap-1">
@@ -2463,14 +2516,21 @@ export default function ForwardPage() {
               <div>
                 <Select
                   isRequired
-                    label="选择导入隧道"
-                    placeholder="请选择要导入的隧道"
-                    selectedKeys={selectedTunnelForImport ? [selectedTunnelForImport.toString()] : []}
-                    variant="bordered"
-                    onSelectionChange={(keys) => {
-                      const selectedKey = Array.from(keys)[0] as string;
-                      setSelectedTunnelForImport(selectedKey ? parseInt(selectedKey) : null);
-                    }}
+                  label="选择导入隧道"
+                  placeholder="请选择要导入的隧道"
+                  selectedKeys={
+                    selectedTunnelForImport
+                      ? [selectedTunnelForImport.toString()]
+                      : []
+                  }
+                  variant="bordered"
+                  onSelectionChange={(keys) => {
+                    const selectedKey = Array.from(keys)[0] as string;
+
+                    setSelectedTunnelForImport(
+                      selectedKey ? parseInt(selectedKey) : null,
+                    );
+                  }}
                 >
                   {tunnels.map((tunnel) => (
                     <SelectItem
@@ -2487,15 +2547,15 @@ export default function ForwardPage() {
               <div>
                 <Textarea
                   classNames={{
-                      input: "font-mono text-sm"
-                    }}
-                    label="导入数据"
-                    maxRows={12}
-                    minRows={8}
-                    placeholder="请输入要导入的转发数据，格式：目标地址|转发名称|入口端口"
-                    value={importData}
-                    variant="flat"
-                    onChange={(e) => setImportData(e.target.value)}
+                    input: "font-mono text-sm",
+                  }}
+                  label="导入数据"
+                  maxRows={12}
+                  minRows={8}
+                  placeholder="请输入要导入的转发数据，格式：目标地址|转发名称|入口端口"
+                  value={importData}
+                  variant="flat"
+                  onChange={(e) => setImportData(e.target.value)}
                 />
               </div>
 
@@ -2536,9 +2596,9 @@ export default function ForwardPage() {
                               viewBox="0 0 20 20"
                             >
                               <path
-                                fillRule="evenodd"
-                                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
                                 clipRule="evenodd"
+                                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                                fillRule="evenodd"
                               />
                             </svg>
                           ) : (
@@ -2548,9 +2608,9 @@ export default function ForwardPage() {
                               viewBox="0 0 20 20"
                             >
                               <path
-                                fillRule="evenodd"
-                                d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
                                 clipRule="evenodd"
+                                d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                                fillRule="evenodd"
                               />
                             </svg>
                           )}
@@ -2596,9 +2656,9 @@ export default function ForwardPage() {
             </Button>
             <Button
               color="warning"
-              onPress={executeImport}
-              isLoading={importLoading}
               isDisabled={!importData.trim() || !selectedTunnelForImport}
+              isLoading={importLoading}
+              onPress={executeImport}
             >
               开始导入
             </Button>
@@ -2608,18 +2668,18 @@ export default function ForwardPage() {
 
       {/* 诊断结果模态框 */}
       <Modal
-        isOpen={diagnosisModalOpen}
-        onOpenChange={setDiagnosisModalOpen}
-        size="4xl"
-        scrollBehavior="inside"
         backdrop="blur"
-        placement="center"
         classNames={{
           base: "rounded-2xl",
           header: "rounded-t-2xl",
           body: "rounded-none",
           footer: "rounded-b-2xl",
         }}
+        isOpen={diagnosisModalOpen}
+        placement="center"
+        scrollBehavior="inside"
+        size="4xl"
+        onOpenChange={setDiagnosisModalOpen}
       >
         <ModalContent>
           {(onClose) => (
@@ -2632,10 +2692,10 @@ export default function ForwardPage() {
                       {currentDiagnosisForward.name}
                     </span>
                     <Chip
-                      color="primary"
-                      variant="flat"
-                      size="sm"
                       className="flex-shrink-0"
+                      color="primary"
+                      size="sm"
+                      variant="flat"
                     >
                       转发服务
                     </Chip>
@@ -2789,14 +2849,14 @@ export default function ForwardPage() {
                                         </td>
                                         <td className="px-3 py-2 text-center">
                                           <Chip
+                                            className="min-w-[50px]"
                                             color={
                                               result.success
                                                 ? "success"
                                                 : "danger"
                                             }
-                                            variant="flat"
                                             size="sm"
-                                            className="min-w-[50px]"
+                                            variant="flat"
                                           >
                                             {result.success ? "成功" : "失败"}
                                           </Chip>
@@ -2832,10 +2892,10 @@ export default function ForwardPage() {
                                         <td className="px-3 py-2 text-center">
                                           {result.success && quality ? (
                                             <Chip
-                                              color={quality.color as any}
-                                              variant="flat"
-                                              size="sm"
                                               className="text-xs"
+                                              color={quality.color as any}
+                                              size="sm"
+                                              variant="flat"
                                             >
                                               {quality.text}
                                             </Chip>
@@ -2957,12 +3017,12 @@ export default function ForwardPage() {
                                         </div>
                                       </div>
                                       <Chip
+                                        className="flex-shrink-0"
                                         color={
                                           result.success ? "success" : "danger"
                                         }
-                                        variant="flat"
                                         size="sm"
-                                        className="flex-shrink-0"
+                                        variant="flat"
                                       >
                                         {result.success ? "成功" : "失败"}
                                       </Chip>
@@ -2996,10 +3056,10 @@ export default function ForwardPage() {
                                           {quality && (
                                             <>
                                               <Chip
-                                                color={quality.color as any}
-                                                variant="flat"
-                                                size="sm"
                                                 className="text-xs"
+                                                color={quality.color as any}
+                                                size="sm"
+                                                variant="flat"
                                               >
                                                 {quality.text}
                                               </Chip>
@@ -3067,7 +3127,7 @@ export default function ForwardPage() {
                                 key={index}
                                 className="text-xs"
                                 color="danger"
-                                description={result.message || '连接失败'}
+                                description={result.message || "连接失败"}
                                 title={result.description}
                                 variant="flat"
                               />
@@ -3086,10 +3146,10 @@ export default function ForwardPage() {
                         viewBox="0 0 24 24"
                       >
                         <path
+                          d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                           strokeLinecap="round"
                           strokeLinejoin="round"
                           strokeWidth={1.5}
-                          d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                         />
                       </svg>
                     </div>
@@ -3106,8 +3166,8 @@ export default function ForwardPage() {
                 {currentDiagnosisForward && (
                   <Button
                     color="primary"
-                    onPress={() => handleDiagnose(currentDiagnosisForward)}
                     isLoading={diagnosisLoading}
+                    onPress={() => handleDiagnose(currentDiagnosisForward)}
                   >
                     重新诊断
                   </Button>
@@ -3119,13 +3179,18 @@ export default function ForwardPage() {
       </Modal>
 
       {/* 批量删除确认模态框 */}
-      <Modal isOpen={batchDeleteModalOpen} onOpenChange={setBatchDeleteModalOpen}>
+      <Modal
+        isOpen={batchDeleteModalOpen}
+        onOpenChange={setBatchDeleteModalOpen}
+      >
         <ModalContent>
           {(onClose) => (
             <>
               <ModalHeader>确认删除</ModalHeader>
               <ModalBody>
-                <p>确定要删除选中的 {selectedIds.size} 项转发吗？此操作不可撤销。</p>
+                <p>
+                  确定要删除选中的 {selectedIds.size} 项转发吗？此操作不可撤销。
+                </p>
               </ModalBody>
               <ModalFooter>
                 <Button variant="light" onPress={onClose}>
@@ -3133,8 +3198,8 @@ export default function ForwardPage() {
                 </Button>
                 <Button
                   color="danger"
-                  onPress={handleBatchDelete}
                   isLoading={batchLoading}
+                  onPress={handleBatchDelete}
                 >
                   确认删除
                 </Button>
@@ -3145,24 +3210,34 @@ export default function ForwardPage() {
       </Modal>
 
       {/* 批量换隧道模态框 */}
-      <Modal isOpen={batchChangeTunnelModalOpen} onOpenChange={setBatchChangeTunnelModalOpen}>
+      <Modal
+        isOpen={batchChangeTunnelModalOpen}
+        onOpenChange={setBatchChangeTunnelModalOpen}
+      >
         <ModalContent>
           {(onClose) => (
             <>
               <ModalHeader>隧道</ModalHeader>
               <ModalBody>
-                <p className="mb-4">将选中的 {selectedIds.size} 项转发迁移到新隧道：</p>
+                <p className="mb-4">
+                  将选中的 {selectedIds.size} 项转发迁移到新隧道：
+                </p>
                 <Select
                   label="目标隧道"
                   placeholder="请选择目标隧道"
-                  selectedKeys={batchTargetTunnelId ? [String(batchTargetTunnelId)] : []}
+                  selectedKeys={
+                    batchTargetTunnelId ? [String(batchTargetTunnelId)] : []
+                  }
                   onSelectionChange={(keys) => {
                     const selected = Array.from(keys)[0];
+
                     setBatchTargetTunnelId(selected ? Number(selected) : null);
                   }}
                 >
                   {tunnels.map((tunnel) => (
-                    <SelectItem key={String(tunnel.id)}>{tunnel.name}</SelectItem>
+                    <SelectItem key={String(tunnel.id)}>
+                      {tunnel.name}
+                    </SelectItem>
                   ))}
                 </Select>
               </ModalBody>
@@ -3172,9 +3247,9 @@ export default function ForwardPage() {
                 </Button>
                 <Button
                   color="primary"
-                  onPress={handleBatchChangeTunnel}
-                  isLoading={batchLoading}
                   isDisabled={!batchTargetTunnelId}
+                  isLoading={batchLoading}
+                  onPress={handleBatchChangeTunnel}
                 >
                   确认换隧道
                 </Button>

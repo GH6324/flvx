@@ -108,7 +108,7 @@ export default function H5Layout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-    } catch (e) {
+    } catch {
       window.scrollTo(0, 0);
     }
     document.body.scrollTop = 0;

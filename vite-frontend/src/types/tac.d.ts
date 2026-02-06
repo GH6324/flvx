@@ -2,7 +2,7 @@
 
 declare global {
   interface Window {
-    TAC: typeof TAC;
+    TAC: TACConstructor;
     currentCaptcha?: any;
     currentCaptchaRes?: any;
   }
@@ -42,13 +42,16 @@ interface CaptchaStyle {
   moveTrackMaskBorderColor?: string;
 }
 
-declare class TAC {
-  constructor(config: CaptchaConfig, style?: CaptchaStyle);
-
-  init(): TAC;
+interface TACInstance {
+  init(): TACInstance;
   reloadCaptcha(): void;
   destroyWindow(): void;
   openCaptcha(): void;
 }
+
+type TACConstructor = new (
+  config: CaptchaConfig,
+  style?: CaptchaStyle,
+) => TACInstance;
 
 export {};

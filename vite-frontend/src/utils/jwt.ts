@@ -27,7 +27,7 @@ function getPayloadFromToken(token: string): JWTPayload | null {
     const decodedPayload = atob(encodedPayload);
 
     return JSON.parse(decodedPayload) as JWTPayload;
-  } catch (error) {
+  } catch {
     return null;
   }
 }
