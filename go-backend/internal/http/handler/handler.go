@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go-backend/internal/auth"
@@ -23,6 +25,14 @@ type Handler struct {
 	repo      *sqlite.Repository
 	jwtSecret string
 	wsServer  *ws.Server
+
+	captchaMu     sync.Mutex
+	captchaTokens map[string]int64
+
+	jobsMu      sync.Mutex
+	jobsCancel  context.CancelFunc
+	jobsStarted bool
+	jobsWG      sync.WaitGroup
 }
 
 type loginRequest struct {
@@ -54,7 +64,12 @@ type flowItem struct {
 }
 
 func New(repo *sqlite.Repository, jwtSecret string) *Handler {
-	return &Handler{repo: repo, jwtSecret: jwtSecret, wsServer: ws.NewServer(repo, jwtSecret)}
+	return &Handler{
+		repo:          repo,
+		jwtSecret:     jwtSecret,
+		wsServer:      ws.NewServer(repo, jwtSecret),
+		captchaTokens: make(map[string]int64),
+	}
 }
 
 func (h *Handler) WebSocketHandler() http.Handler {
@@ -167,6 +182,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if captchaEnabled && strings.TrimSpace(req.CaptchaID) == "" {
+		response.WriteJSON(w, response.ErrDefault("验证码校验失败"))
+		return
+	}
+	if captchaEnabled && !h.consumeCaptchaToken(req.CaptchaID) {
 		response.WriteJSON(w, response.ErrDefault("验证码校验失败"))
 		return
 	}
@@ -558,13 +577,17 @@ func (h *Handler) flowTest(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) flowConfig(w http.ResponseWriter, r *http.Request) {
 	secret := r.URL.Query().Get("secret")
-	if ok, _ := h.repo.NodeExistsBySecret(secret); !ok {
+	node, err := h.repo.GetNodeBySecret(secret)
+	if err != nil || node == nil {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("ok"))
 		return
 	}
 
-	_, _ = readAndDecryptFlowBody(r.Body, secret)
+	rawData, err := readAndDecryptFlowBody(r.Body, secret)
+	if err == nil && strings.TrimSpace(rawData) != "" {
+		h.cleanNodeConfigs(node.ID, rawData)
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte("ok"))
 }
@@ -582,17 +605,7 @@ func (h *Handler) flowUpload(w http.ResponseWriter, r *http.Request) {
 		var items []flowItem
 		if json.Unmarshal([]byte(raw), &items) == nil {
 			for _, item := range items {
-				parts := strings.Split(item.N, "_")
-				if len(parts) < 3 || item.N == "web_api" {
-					continue
-				}
-				forwardID, err1 := strconv.ParseInt(parts[0], 10, 64)
-				userID, err2 := strconv.ParseInt(parts[1], 10, 64)
-				userTunnelID, err3 := strconv.ParseInt(parts[2], 10, 64)
-				if err1 != nil || err2 != nil || err3 != nil {
-					continue
-				}
-				_ = h.repo.AddFlow(forwardID, userID, userTunnelID, item.D, item.U)
+				h.processFlowItem(item)
 			}
 		}
 	}

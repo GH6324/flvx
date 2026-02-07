@@ -16,6 +16,7 @@ type App struct {
 	cfg    config.Config
 	server *http.Server
 	repo   *sqlite.Repository
+	h      *handler.Handler
 }
 
 func New(cfg config.Config) (*App, error) {
@@ -36,14 +37,20 @@ func New(cfg config.Config) (*App, error) {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	return &App{cfg: cfg, server: s, repo: repo}, nil
+	return &App{cfg: cfg, server: s, repo: repo, h: h}, nil
 }
 
 func (a *App) Run() error {
+	if a.h != nil {
+		a.h.StartBackgroundJobs()
+	}
 	return a.server.ListenAndServe()
 }
 
 func (a *App) Shutdown(ctx context.Context) error {
+	if a.h != nil {
+		a.h.StopBackgroundJobs()
+	}
 	shutdownErr := a.server.Shutdown(ctx)
 	closeErr := a.repo.Close()
 	if shutdownErr != nil {

@@ -27,9 +27,11 @@ type forwardRecord struct {
 }
 
 type tunnelRecord struct {
-	ID     int64
-	Type   int
-	Status int
+	ID           int64
+	Type         int
+	Status       int
+	Flow         int64
+	TrafficRatio float64
 }
 
 type forwardPortRecord struct {
@@ -111,14 +113,20 @@ func (h *Handler) getForwardRecord(forwardID int64) (*forwardRecord, error) {
 }
 
 func (h *Handler) getTunnelRecord(tunnelID int64) (*tunnelRecord, error) {
-	row := h.repo.DB().QueryRow(`SELECT id, type, status FROM tunnel WHERE id = ? LIMIT 1`, tunnelID)
+	row := h.repo.DB().QueryRow(`SELECT id, type, status, flow, traffic_ratio FROM tunnel WHERE id = ? LIMIT 1`, tunnelID)
 	var tr tunnelRecord
-	err := row.Scan(&tr.ID, &tr.Type, &tr.Status)
+	err := row.Scan(&tr.ID, &tr.Type, &tr.Status, &tr.Flow, &tr.TrafficRatio)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("隧道不存在")
 		}
 		return nil, err
+	}
+	if tr.Flow <= 0 {
+		tr.Flow = 1
+	}
+	if tr.TrafficRatio <= 0 {
+		tr.TrafficRatio = 1
 	}
 	return &tr, nil
 }
@@ -287,7 +295,7 @@ func (h *Handler) controlForwardServices(forward *forwardRecord, commandType str
 	}
 	base := buildForwardServiceBase(forward.ID, forward.UserID, userTunnelID)
 	payload := map[string]interface{}{
-		"services": []string{base + "_tcp", base + "_udp"},
+		"services": []string{base, base + "_tcp", base + "_udp"},
 	}
 	seen := map[int64]struct{}{}
 	for _, fp := range ports {

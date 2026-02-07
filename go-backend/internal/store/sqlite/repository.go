@@ -300,14 +300,10 @@ func (r *Repository) GetUserPackageForwards(userID int64) ([]UserForwardDetail, 
 	}
 
 	rows, err := r.db.Query(`
-		SELECT f.id, f.name, f.tunnel_id, t.name, f.remote_addr, f.in_flow, f.out_flow, f.status, f.created_time,
-		       GROUP_CONCAT(n.server_ip || ':' || fp.port), MIN(fp.port)
+		SELECT f.id, f.name, f.tunnel_id, t.name, f.remote_addr, f.in_flow, f.out_flow, f.status, f.created_time
 		FROM forward f
 		LEFT JOIN tunnel t ON t.id = f.tunnel_id
-		LEFT JOIN forward_port fp ON fp.forward_id = f.id
-		LEFT JOIN node n ON n.id = fp.node_id
 		WHERE f.user_id = ?
-		GROUP BY f.id
 		ORDER BY f.id ASC
 	`, userID)
 	if err != nil {
@@ -320,10 +316,18 @@ func (r *Repository) GetUserPackageForwards(userID int64) ([]UserForwardDetail, 
 		var item UserForwardDetail
 		if err := rows.Scan(
 			&item.ID, &item.Name, &item.TunnelID, &item.TunnelName, &item.RemoteAddr,
-			&item.InFlow, &item.OutFlow, &item.Status, &item.CreatedAt, &item.InIP, &item.InPort,
+			&item.InFlow, &item.OutFlow, &item.Status, &item.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
+
+		inIP, inPort, err := resolveForwardIngress(r.db, item.ID, item.TunnelID)
+		if err != nil {
+			return nil, err
+		}
+		item.InIP = inIP
+		item.InPort = inPort
+
 		items = append(items, item)
 	}
 
@@ -503,6 +507,7 @@ func (r *Repository) ListUsers() ([]map[string]interface{}, error) {
 	rows, err := r.db.Query(`
 		SELECT id, user, role_id, exp_time, flow, in_flow, out_flow, flow_reset_time, num, created_time, updated_time, status
 		FROM user
+		WHERE role_id != 0
 		ORDER BY id ASC
 	`)
 	if err != nil {
@@ -595,14 +600,9 @@ func (r *Repository) ListForwards() ([]map[string]interface{}, error) {
 
 	rows, err := r.db.Query(`
 		SELECT f.id, f.user_id, f.user_name, f.name, f.tunnel_id, t.name, f.remote_addr, f.strategy,
-		       f.in_flow, f.out_flow, f.created_time, f.status, f.inx,
-		       GROUP_CONCAT(CASE WHEN n.server_ip IS NOT NULL AND fp.port IS NOT NULL THEN n.server_ip || ':' || fp.port END),
-		       MIN(fp.port)
+		       f.in_flow, f.out_flow, f.created_time, f.status, f.inx
 		FROM forward f
 		LEFT JOIN tunnel t ON t.id = f.tunnel_id
-		LEFT JOIN forward_port fp ON fp.forward_id = f.id
-		LEFT JOIN node n ON n.id = fp.node_id
-		GROUP BY f.id
 		ORDER BY f.inx ASC, f.id ASC
 	`)
 	if err != nil {
@@ -615,10 +615,13 @@ func (r *Repository) ListForwards() ([]map[string]interface{}, error) {
 		var id, userID, tunnelID, inFlow, outFlow, createdTime, inx int64
 		var userName, name, tunnelName, remoteAddr, strategy string
 		var status int
-		var inIP sql.NullString
-		var inPort sql.NullInt64
 
-		if err := rows.Scan(&id, &userID, &userName, &name, &tunnelID, &tunnelName, &remoteAddr, &strategy, &inFlow, &outFlow, &createdTime, &status, &inx, &inIP, &inPort); err != nil {
+		if err := rows.Scan(&id, &userID, &userName, &name, &tunnelID, &tunnelName, &remoteAddr, &strategy, &inFlow, &outFlow, &createdTime, &status, &inx); err != nil {
+			return nil, err
+		}
+
+		inIP, inPort, err := resolveForwardIngress(r.db, id, tunnelID)
+		if err != nil {
 			return nil, err
 		}
 
@@ -629,7 +632,7 @@ func (r *Repository) ListForwards() ([]map[string]interface{}, error) {
 			"name":        name,
 			"tunnelId":    tunnelID,
 			"tunnelName":  tunnelName,
-			"inIp":        nullableString(inIP),
+			"inIp":        nullableForwardIngress(inIP),
 			"inPort":      nullableInt64(inPort),
 			"remoteAddr":  remoteAddr,
 			"strategy":    strategy,
@@ -1015,6 +1018,94 @@ func nullableString(v sql.NullString) interface{} {
 		return v.String
 	}
 	return nil
+}
+
+func nullableForwardIngress(v string) interface{} {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	return v
+}
+
+func resolveForwardIngress(db *sql.DB, forwardID int64, tunnelID int64) (string, sql.NullInt64, error) {
+	var tunnelInIP sql.NullString
+	if err := db.QueryRow(`SELECT in_ip FROM tunnel WHERE id = ? LIMIT 1`, tunnelID).Scan(&tunnelInIP); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", sql.NullInt64{}, err
+		}
+	}
+
+	rows, err := db.Query(`
+		SELECT fp.port, n.server_ip
+		FROM forward_port fp
+		LEFT JOIN node n ON n.id = fp.node_id
+		WHERE fp.forward_id = ?
+		ORDER BY fp.id ASC
+	`, forwardID)
+	if err != nil {
+		return "", sql.NullInt64{}, err
+	}
+	defer rows.Close()
+
+	ports := make([]int64, 0)
+	nodePairs := make([]string, 0)
+	seenPorts := make(map[int64]struct{})
+	seenPairs := make(map[string]struct{})
+
+	for rows.Next() {
+		var port sql.NullInt64
+		var nodeIP sql.NullString
+		if err := rows.Scan(&port, &nodeIP); err != nil {
+			return "", sql.NullInt64{}, err
+		}
+		if !port.Valid {
+			continue
+		}
+		if _, ok := seenPorts[port.Int64]; !ok {
+			seenPorts[port.Int64] = struct{}{}
+			ports = append(ports, port.Int64)
+		}
+		if nodeIP.Valid && strings.TrimSpace(nodeIP.String) != "" {
+			pair := fmt.Sprintf("%s:%d", strings.TrimSpace(nodeIP.String), port.Int64)
+			if _, ok := seenPairs[pair]; !ok {
+				seenPairs[pair] = struct{}{}
+				nodePairs = append(nodePairs, pair)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", sql.NullInt64{}, err
+	}
+
+	if len(ports) == 0 {
+		return "", sql.NullInt64{}, nil
+	}
+
+	inPort := sql.NullInt64{Int64: ports[0], Valid: true}
+
+	entries := make([]string, 0)
+	if tunnelInIP.Valid && strings.TrimSpace(tunnelInIP.String) != "" {
+		tunnelIPs := strings.Split(tunnelInIP.String, ",")
+		seen := make(map[string]struct{})
+		for _, ip := range tunnelIPs {
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			if _, ok := seen[ip]; ok {
+				continue
+			}
+			seen[ip] = struct{}{}
+			for _, port := range ports {
+				entries = append(entries, fmt.Sprintf("%s:%d", ip, port))
+			}
+		}
+	} else {
+		entries = append(entries, nodePairs...)
+	}
+
+	return strings.Join(entries, ","), inPort, nil
 }
 
 func nullableInt64(v sql.NullInt64) interface{} {

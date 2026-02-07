@@ -1,6 +1,7 @@
 package contract_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -17,6 +18,66 @@ import (
 	"go-backend/internal/http/response"
 	"go-backend/internal/store/sqlite"
 )
+
+func TestCaptchaVerifyLoginContract(t *testing.T) {
+	secret := "contract-jwt-secret"
+	router, repo := setupContractRouter(t, secret)
+
+	_, err := repo.DB().Exec(`
+		INSERT INTO vite_config(name, value, time)
+		VALUES(?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET value = excluded.value, time = excluded.time
+	`, "captcha_enabled", "true", time.Now().UnixMilli())
+	if err != nil {
+		t.Fatalf("enable captcha: %v", err)
+	}
+
+	t.Run("login denied without verified captcha token", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"username":"admin_user","password":"admin_user","captchaId":""}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/user/login", body)
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+
+		router.ServeHTTP(resp, req)
+
+		assertCodeMsg(t, resp, -1, "验证码校验失败")
+	})
+
+	t.Run("captcha token is one-time and consumed by login", func(t *testing.T) {
+		verifyReq := httptest.NewRequest(http.MethodPost, "/api/v1/captcha/verify", bytes.NewBufferString(`{"id":"captcha-token-1","data":"ok"}`))
+		verifyReq.Header.Set("Content-Type", "application/json")
+		verifyResp := httptest.NewRecorder()
+
+		router.ServeHTTP(verifyResp, verifyReq)
+
+		var verifyOut struct {
+			Success bool `json:"success"`
+			Data    struct {
+				ValidToken string `json:"validToken"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(verifyResp.Body).Decode(&verifyOut); err != nil {
+			t.Fatalf("decode captcha verify response: %v", err)
+		}
+		if !verifyOut.Success || verifyOut.Data.ValidToken != "captcha-token-1" {
+			t.Fatalf("unexpected captcha verify payload: success=%v token=%q", verifyOut.Success, verifyOut.Data.ValidToken)
+		}
+
+		loginBody := bytes.NewBufferString(`{"username":"admin_user","password":"admin_user","captchaId":"captcha-token-1"}`)
+		loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/user/login", loginBody)
+		loginReq.Header.Set("Content-Type", "application/json")
+		loginResp := httptest.NewRecorder()
+		router.ServeHTTP(loginResp, loginReq)
+		assertCode(t, loginResp, 0)
+
+		replayBody := bytes.NewBufferString(`{"username":"admin_user","password":"admin_user","captchaId":"captcha-token-1"}`)
+		replayReq := httptest.NewRequest(http.MethodPost, "/api/v1/user/login", replayBody)
+		replayReq.Header.Set("Content-Type", "application/json")
+		replayResp := httptest.NewRecorder()
+		router.ServeHTTP(replayResp, replayReq)
+		assertCodeMsg(t, replayResp, -1, "验证码校验失败")
+	})
+}
 
 func TestOpenAPISubStoreContracts(t *testing.T) {
 	router, repo := setupContractRouter(t, "contract-jwt-secret")

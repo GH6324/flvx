@@ -56,7 +56,7 @@ func (h *Handler) userCreate(w http.ResponseWriter, r *http.Request) {
 	num := asInt(req["num"], 10)
 	expTime := asInt64(req["expTime"], time.Now().Add(365*24*time.Hour).UnixMilli())
 	flowResetTime := asInt64(req["flowResetTime"], 1)
-	roleID := asInt(req["roleId"], asInt(req["role_id"], 1))
+	roleID := 1
 	now := time.Now().UnixMilli()
 
 	_, err := db.Exec(`
@@ -94,6 +94,20 @@ func (h *Handler) userUpdate(w http.ResponseWriter, r *http.Request) {
 	db := h.repo.DB()
 	if db == nil {
 		response.WriteJSON(w, response.Err(-2, "database unavailable"))
+		return
+	}
+
+	var roleID int
+	if err := db.QueryRow(`SELECT role_id FROM user WHERE id = ?`, id).Scan(&roleID); err != nil {
+		if err == sql.ErrNoRows {
+			response.WriteJSON(w, response.ErrDefault("用户不存在"))
+			return
+		}
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	if roleID == 0 {
+		response.WriteJSON(w, response.ErrDefault("请不要作死"))
 		return
 	}
 
@@ -151,6 +165,20 @@ func (h *Handler) userDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var roleID int
+	if err := h.repo.DB().QueryRow(`SELECT role_id FROM user WHERE id = ?`, id).Scan(&roleID); err != nil {
+		if err == sql.ErrNoRows {
+			response.WriteJSON(w, response.ErrDefault("用户不存在"))
+			return
+		}
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	if roleID == 0 {
+		response.WriteJSON(w, response.ErrDefault("请不要作死"))
+		return
+	}
+
 	db := h.repo.DB()
 	tx, err := db.Begin()
 	if err != nil {
@@ -167,11 +195,19 @@ func (h *Handler) userDelete(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
+	if _, err = tx.Exec(`DELETE FROM group_permission_grant WHERE user_tunnel_id IN (SELECT id FROM user_tunnel WHERE user_id = ?)`, id); err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
 	if _, err = tx.Exec(`DELETE FROM user_tunnel WHERE user_id = ?`, id); err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
 	if _, err = tx.Exec(`DELETE FROM user_group_user WHERE user_id = ?`, id); err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	if _, err = tx.Exec(`DELETE FROM statistics_flow WHERE user_id = ?`, id); err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
@@ -248,6 +284,16 @@ func (h *Handler) captchaVerify(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		id = asString(req["id"])
 	}
+	trackData := asString(req["data"])
+	if trackData == "" {
+		trackData = asString(req["trackData"])
+	}
+	if id == "" || trackData == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"success":false,"message":"bad request"}`))
+		return
+	}
+	h.storeCaptchaToken(id)
 	payload := map[string]interface{}{
 		"success": true,
 		"data":    map[string]interface{}{"validToken": id},

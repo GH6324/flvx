@@ -1,37 +1,6 @@
 services:
   backend:
-    image: ghcr.io/sagit-chu/springboot-backend:2.0.7-beta
-    container_name: springboot-backend
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-    environment:
-      DB_PATH: /app/data/gost.db
-      JWT_SECRET: ${JWT_SECRET}
-      LOG_DIR: /app/logs
-      JAVA_OPTS: "-Xms256m -Xmx512m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"
-    ports:
-      - "${BACKEND_PORT}:6365"
-    volumes:
-      - backend_logs:/app/logs
-      - sqlite_data:/app/data
-    networks:
-      - gost-network
-    stop_grace_period: 30s
-    stop_signal: SIGTERM
-    healthcheck:
-      test: ["CMD", "sh", "-c", "wget --no-verbose --tries=1 --spider http://localhost:6365/flow/test || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-
-  backend-go:
-    profiles: ["go-backend"]
-    build:
-      context: ./go-backend
+    image: ghcr.io/sagit-chu/go-backend:2.0.7-beta
     container_name: go-backend
     restart: unless-stopped
     logging:
@@ -44,12 +13,14 @@ services:
       LOG_DIR: /app/logs
       SERVER_ADDR: :6365
     ports:
-      - "${GO_BACKEND_PORT:-6366}:6365"
+      - "${BACKEND_PORT}:6365"
     volumes:
       - backend_logs:/app/logs
       - sqlite_data:/app/data
     networks:
       - gost-network
+    stop_grace_period: 30s
+    stop_signal: SIGTERM
     healthcheck:
       test: ["CMD", "sh", "-c", "wget --no-verbose --tries=1 --spider http://localhost:6365/flow/test || exit 1"]
       interval: 30s
