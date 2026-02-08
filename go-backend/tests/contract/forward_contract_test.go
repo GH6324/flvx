@@ -447,6 +447,89 @@ func TestForwardBatchChangeTunnelRollbackOnSyncFailure(t *testing.T) {
 	}
 }
 
+func TestUserTunnelReassignmentKeepsStableID(t *testing.T) {
+	secret := "contract-jwt-secret"
+	router, repo := setupContractRouter(t, secret)
+	now := time.Now().UnixMilli()
+
+	adminToken, err := auth.GenerateToken(1, "admin_user", 0, secret)
+	if err != nil {
+		t.Fatalf("generate admin token: %v", err)
+	}
+
+	if _, err := repo.DB().Exec(`
+		INSERT INTO user(id, user, pwd, role_id, exp_time, flow, in_flow, out_flow, flow_reset_time, num, created_time, updated_time, status)
+		VALUES(100, 'stable_user', 'pwd', 1, 2727251700000, 99999, 0, 0, 1, 99999, ?, ?, 1)
+	`, now, now); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+
+	tunnelRes, err := repo.DB().Exec(`
+		INSERT INTO tunnel(name, traffic_ratio, type, protocol, flow, created_time, updated_time, status, in_ip, inx)
+		VALUES('stable-tunnel', 1.0, 1, 'tls', 99999, ?, ?, 1, NULL, 0)
+	`, now, now)
+	if err != nil {
+		t.Fatalf("insert tunnel: %v", err)
+	}
+	tunnelID, _ := tunnelRes.LastInsertId()
+
+	// 1. Assign permission (creates new user_tunnel)
+	// userTunnelBatchAssign expects structure: {userId: 123, tunnels: [{tunnelId: 456, ...}]}
+	assignPayload := `{"userId":100,"tunnels":[{"tunnelId":` + jsonNumber(tunnelID) + `}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tunnel/user/batch-assign", bytes.NewBufferString(assignPayload))
+	req.Header.Set("Authorization", adminToken)
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	var out response.R
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Code != 0 {
+		t.Fatalf("expected code 0, got %d msg=%q", out.Code, out.Msg)
+	}
+
+	var initialID int64
+	if err := repo.DB().QueryRow(`SELECT id FROM user_tunnel WHERE user_id = 100 AND tunnel_id = ?`, tunnelID).Scan(&initialID); err != nil {
+		t.Fatalf("query initial user_tunnel id: %v", err)
+	}
+
+	// 2. Re-assign permission (should UPDATE, not INSERT)
+	reassignPayload := `{"userId":100,"tunnels":[{"tunnelId":` + jsonNumber(tunnelID) + `}]}`
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/tunnel/user/batch-assign", bytes.NewBufferString(reassignPayload))
+	req2.Header.Set("Authorization", adminToken)
+	req2.Header.Set("Content-Type", "application/json")
+	res2 := httptest.NewRecorder()
+	router.ServeHTTP(res2, req2)
+
+	var out2 response.R
+	if err := json.NewDecoder(res2.Body).Decode(&out2); err != nil {
+		t.Fatalf("decode response 2: %v", err)
+	}
+	if out2.Code != 0 {
+		t.Fatalf("expected code 0, got %d msg=%q", out2.Code, out2.Msg)
+	}
+
+	// 3. Verify stable ID and no duplicates
+	var count int
+	if err := repo.DB().QueryRow(`SELECT COUNT(1) FROM user_tunnel WHERE user_id = 100 AND tunnel_id = ?`, tunnelID).Scan(&count); err != nil {
+		t.Fatalf("query count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 user_tunnel record, got %d", count)
+	}
+
+	var currentID int64
+	if err := repo.DB().QueryRow(`SELECT id FROM user_tunnel WHERE user_id = 100 AND tunnel_id = ?`, tunnelID).Scan(&currentID); err != nil {
+		t.Fatalf("query current user_tunnel: %v", err)
+	}
+
+	if currentID != initialID {
+		t.Fatalf("user_tunnel ID changed from %d to %d (unstable ID!)", initialID, currentID)
+	}
+}
+
 func jsonNumber(v int64) string {
 	return strconv.FormatInt(v, 10)
 }

@@ -2489,38 +2489,100 @@ func (h *Handler) upsertUserTunnel(req map[string]interface{}) error {
 	}
 	db := h.repo.DB()
 	var existingID int64
-	err := db.QueryRow(`SELECT id FROM user_tunnel WHERE user_id = ? AND tunnel_id = ? LIMIT 1`, userID, tunnelID).Scan(&existingID)
-	flow := asInt64(req["flow"], -1)
-	num := asInt(req["num"], -1)
-	expTime := asInt64(req["expTime"], -1)
-	flowReset := asInt64(req["flowResetTime"], -1)
-	status := asInt(req["status"], 1)
+	var currentFlow, currentNum, currentExpTime, currentFlowReset int64
+	var currentSpeedID sql.NullInt64
+	var currentStatus int
+
+	err := db.QueryRow(`
+		SELECT id, flow, num, exp_time, flow_reset_time, speed_id, status 
+		FROM user_tunnel 
+		WHERE user_id = ? AND tunnel_id = ? 
+		LIMIT 1
+	`, userID, tunnelID).Scan(&existingID, &currentFlow, &currentNum, &currentExpTime, &currentFlowReset, &currentSpeedID, &currentStatus)
+
 	speedID := asAnyToInt64Ptr(req["speedId"])
+	reqFlow := asInt64(req["flow"], -1)
+	reqNum := asInt(req["num"], -1)
+	reqExpTime := asInt64(req["expTime"], -1)
+	reqFlowReset := asInt64(req["flowResetTime"], -1)
+	reqStatus := asInt(req["status"], -1)
+
 	if err == sql.ErrNoRows {
-		if flow < 0 || num < 0 || expTime < 0 || flowReset < 0 {
-			_ = db.QueryRow(`SELECT flow, num, exp_time, flow_reset_time FROM user WHERE id = ?`, userID).Scan(&flow, &num, &expTime, &flowReset)
+		if reqFlow < 0 || reqNum < 0 || reqExpTime < 0 || reqFlowReset < 0 {
+			var uFlow, uNum, uExp, uReset int64
+			if uErr := db.QueryRow(`SELECT flow, num, exp_time, flow_reset_time FROM user WHERE id = ?`, userID).Scan(&uFlow, &uNum, &uExp, &uReset); uErr == nil {
+				if reqFlow < 0 {
+					reqFlow = uFlow
+				}
+				if reqNum < 0 {
+					reqNum = int(uNum)
+				}
+				if reqExpTime < 0 {
+					reqExpTime = uExp
+				}
+				if reqFlowReset < 0 {
+					reqFlowReset = uReset
+				}
+			}
 		}
+		if reqFlow < 0 {
+			reqFlow = 0
+		}
+		if reqNum < 0 {
+			reqNum = 0
+		}
+		if reqExpTime < 0 {
+			reqExpTime = time.Now().Add(365 * 24 * time.Hour).UnixMilli()
+		}
+		if reqFlowReset < 0 {
+			reqFlowReset = 1
+		}
+		if reqStatus < 0 {
+			reqStatus = 1
+		}
+
 		_, err = db.Exec(`INSERT INTO user_tunnel(user_id, tunnel_id, speed_id, num, flow, in_flow, out_flow, flow_reset_time, exp_time, status) VALUES(?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
-			userID, tunnelID, nullableInt(speedID), num, flow, flowReset, expTime, status)
+			userID, tunnelID, nullableInt(speedID), reqNum, reqFlow, reqFlowReset, reqExpTime, reqStatus)
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	if flow < 0 {
-		flow = 0
+
+	newFlow := currentFlow
+	if reqFlow >= 0 {
+		newFlow = reqFlow
 	}
-	if num < 0 {
-		num = 0
+
+	newNum := int(currentNum)
+	if reqNum >= 0 {
+		newNum = reqNum
 	}
-	if expTime < 0 {
-		expTime = time.Now().Add(365 * 24 * time.Hour).UnixMilli()
+
+	newExpTime := currentExpTime
+	if reqExpTime >= 0 {
+		newExpTime = reqExpTime
 	}
-	if flowReset < 0 {
-		flowReset = 1
+
+	newFlowReset := currentFlowReset
+	if reqFlowReset >= 0 {
+		newFlowReset = reqFlowReset
 	}
+
+	newStatus := currentStatus
+	if reqStatus >= 0 {
+		newStatus = reqStatus
+	}
+
+	newSpeedID := currentSpeedID
+	if speedID != nil {
+		newSpeedID = sql.NullInt64{Int64: *speedID, Valid: true}
+	} else if _, ok := req["speedId"]; ok {
+		newSpeedID = sql.NullInt64{Valid: false}
+	}
+
 	_, err = db.Exec(`UPDATE user_tunnel SET speed_id = ?, flow = ?, num = ?, exp_time = ?, flow_reset_time = ?, status = ? WHERE id = ?`,
-		nullableInt(speedID), flow, num, expTime, flowReset, status, existingID)
+		newSpeedID, newFlow, newNum, newExpTime, newFlowReset, newStatus, existingID)
 	return err
 }
 
