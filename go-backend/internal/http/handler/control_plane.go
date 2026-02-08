@@ -238,6 +238,7 @@ func (h *Handler) resolveUserTunnelAndLimiter(userID, tunnelID int64) (int64, *i
 		FROM user_tunnel ut
 		LEFT JOIN speed_limit sl ON sl.id = ut.speed_id
 		WHERE ut.user_id = ? AND ut.tunnel_id = ?
+		ORDER BY ut.id ASC
 		LIMIT 1
 	`, userID, tunnelID)
 	var userTunnelID int64
@@ -254,6 +255,58 @@ func (h *Handler) resolveUserTunnelAndLimiter(userID, tunnelID int64) (int64, *i
 	}
 	v := int(speed.Int64)
 	return userTunnelID, &v, nil
+}
+
+func (h *Handler) listUserTunnelIDs(userID, tunnelID int64) ([]int64, error) {
+	rows, err := h.repo.DB().Query(`
+		SELECT id
+		FROM user_tunnel
+		WHERE user_id = ? AND tunnel_id = ?
+		ORDER BY id ASC
+	`, userID, tunnelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (h *Handler) listUserTunnelIDsByUser(userID int64) ([]int64, error) {
+	rows, err := h.repo.DB().Query(`
+		SELECT id
+		FROM user_tunnel
+		WHERE user_id = ?
+		ORDER BY id ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (h *Handler) syncForwardServices(forward *forwardRecord, method string, allowFallbackAdd bool) error {
@@ -311,20 +364,66 @@ func (h *Handler) controlForwardServices(forward *forwardRecord, commandType str
 	if err != nil {
 		return err
 	}
-	base := buildForwardServiceBase(forward.ID, forward.UserID, userTunnelID)
-	payload := map[string]interface{}{
-		"services": buildForwardControlServiceNames(base, commandType),
+	userTunnelIDs, err := h.listUserTunnelIDs(forward.UserID, forward.TunnelID)
+	if err != nil {
+		return err
 	}
+	allUserTunnelIDs, err := h.listUserTunnelIDsByUser(forward.UserID)
+	if err != nil {
+		return err
+	}
+	candidateTunnelIDs := make([]int64, 0, len(userTunnelIDs)+len(allUserTunnelIDs))
+	candidateTunnelIDs = append(candidateTunnelIDs, userTunnelIDs...)
+	candidateTunnelIDs = append(candidateTunnelIDs, allUserTunnelIDs...)
+	bases := buildForwardServiceBaseCandidates(forward.ID, forward.UserID, userTunnelID, candidateTunnelIDs)
 	seen := map[int64]struct{}{}
 	for _, fp := range ports {
 		if _, ok := seen[fp.NodeID]; ok {
 			continue
 		}
 		seen[fp.NodeID] = struct{}{}
-		_, err := h.sendNodeCommand(fp.NodeID, commandType, payload, false, tolerateNotFound)
-		if err != nil {
-			return err
+
+		var lastNotFoundErr error
+		nodeHandled := false
+
+		for _, base := range bases {
+			variants := []string{base + "_tcp", base + "_udp"}
+			if shouldTryLegacySingleService(commandType) || strings.EqualFold(strings.TrimSpace(commandType), "DeleteService") {
+				variants = append(variants, base)
+			}
+
+			candidateHandled := false
+			for _, name := range variants {
+				payload := map[string]interface{}{
+					"services": []string{name},
+				}
+				_, err := h.sendNodeCommand(fp.NodeID, commandType, payload, false, false)
+				if err == nil {
+					candidateHandled = true
+					continue
+				}
+				if !isNotFoundError(err) {
+					return err
+				}
+				lastNotFoundErr = err
+			}
+
+			if candidateHandled {
+				nodeHandled = true
+				break
+			}
 		}
+
+		if nodeHandled {
+			continue
+		}
+		if tolerateNotFound {
+			continue
+		}
+		if lastNotFoundErr != nil {
+			return lastNotFoundErr
+		}
+		return errors.New("service control failed")
 	}
 	return nil
 }
@@ -852,12 +951,50 @@ func buildForwardServiceBase(forwardID, userID, userTunnelID int64) string {
 	return fmt.Sprintf("%d_%d_%d", forwardID, userID, userTunnelID)
 }
 
+func buildForwardServiceBaseCandidates(forwardID, userID, preferredUserTunnelID int64, userTunnelIDs []int64) []string {
+	orderedIDs := make([]int64, 0, len(userTunnelIDs)+2)
+	seen := make(map[int64]struct{}, len(userTunnelIDs)+2)
+
+	appendID := func(id int64) {
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		orderedIDs = append(orderedIDs, id)
+	}
+
+	appendID(preferredUserTunnelID)
+	for _, id := range userTunnelIDs {
+		appendID(id)
+	}
+	appendID(0)
+
+	bases := make([]string, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
+		bases = append(bases, buildForwardServiceBase(forwardID, userID, id))
+	}
+	return bases
+}
+
 func buildForwardControlServiceNames(base, commandType string) []string {
 	names := []string{base + "_tcp", base + "_udp"}
 	if strings.EqualFold(strings.TrimSpace(commandType), "DeleteService") {
 		return append([]string{base}, names...)
 	}
 	return names
+}
+
+func shouldTryLegacySingleService(commandType string) bool {
+	cmd := strings.ToLower(strings.TrimSpace(commandType))
+	return cmd == "pauseservice" || cmd == "resumeservice"
+}
+
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "不存在")
 }
 
 func buildForwardServiceConfigs(baseName string, forward *forwardRecord, tunnel *tunnelRecord, node *nodeRecord, port int, limiter *int) []map[string]interface{} {

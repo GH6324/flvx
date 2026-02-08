@@ -25,3 +25,31 @@ func TestBuildForwardControlServiceNamesDelete(t *testing.T) {
 		t.Fatalf("expected %v, got %v", want, got)
 	}
 }
+
+func TestBuildForwardServiceBaseCandidates(t *testing.T) {
+	got := buildForwardServiceBaseCandidates(12, 34, 56, []int64{56, 78, 90})
+	want := []string{"12_34_56", "12_34_78", "12_34_90", "12_34_0"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+func TestBuildForwardServiceBaseCandidatesWithZeroPreferred(t *testing.T) {
+	got := buildForwardServiceBaseCandidates(12, 34, 0, []int64{78, 0, 90})
+	want := []string{"12_34_0", "12_34_78", "12_34_90"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+func TestShouldTryLegacySingleService(t *testing.T) {
+	if !shouldTryLegacySingleService("PauseService") {
+		t.Fatalf("PauseService should require legacy fallback")
+	}
+	if !shouldTryLegacySingleService("resumeService") {
+		t.Fatalf("ResumeService should require legacy fallback")
+	}
+	if shouldTryLegacySingleService("DeleteService") {
+		t.Fatalf("DeleteService should not require legacy fallback")
+	}
+}

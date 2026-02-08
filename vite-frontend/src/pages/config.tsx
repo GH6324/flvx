@@ -70,39 +70,22 @@ const CONFIG_ITEMS: ConfigItem[] = [
     type: "switch",
   },
   {
-    key: "captcha_type",
-    label: "验证码类型",
-    description: "选择验证码的显示类型，不同类型有不同的安全级别",
-    type: "select",
+    key: "cloudflare_site_key",
+    label: "Cloudflare Site Key",
+    placeholder: "请输入 Cloudflare Site Key",
+    description: "Cloudflare Turnstile 站点密钥",
+    type: "input",
     dependsOn: "captcha_enabled",
     dependsValue: "true",
-    options: [
-      {
-        label: "随机类型",
-        value: "RANDOM",
-        description: "系统随机选择验证码类型",
-      },
-      {
-        label: "滑块验证码",
-        value: "SLIDER",
-        description: "拖动滑块完成拼图验证",
-      },
-      {
-        label: "文字点选验证码",
-        value: "WORD_IMAGE_CLICK",
-        description: "按顺序点击指定文字",
-      },
-      {
-        label: "旋转验证码",
-        value: "ROTATE",
-        description: "旋转图片到正确角度",
-      },
-      {
-        label: "拼图验证码",
-        value: "CONCAT",
-        description: "拖动滑块完成图片拼接",
-      },
-    ],
+  },
+  {
+    key: "cloudflare_secret_key",
+    label: "Cloudflare Secret Key",
+    placeholder: "请输入 Cloudflare Secret Key",
+    description: "Cloudflare Turnstile 密钥",
+    type: "input",
+    dependsOn: "captcha_enabled",
+    dependsValue: "true",
   },
 ];
 
@@ -110,7 +93,13 @@ const CONFIG_ITEMS: ConfigItem[] = [
 const getInitialConfigs = (): Record<string, string> => {
   if (typeof window === "undefined") return {};
 
-  const configKeys = ["app_name", "captcha_enabled", "captcha_type", "ip"];
+  const configKeys = [
+    "app_name",
+    "captcha_enabled",
+    "cloudflare_site_key",
+    "cloudflare_secret_key",
+    "ip",
+  ];
   const initialConfigs: Record<string, string> = {};
 
   try {
@@ -193,14 +182,7 @@ export default function ConfigPage() {
 
   // 处理配置项变更
   const handleConfigChange = (key: string, value: string) => {
-    let newConfigs = { ...configs, [key]: value };
-
-    // 特殊处理：启用验证码时，如果验证码类型未设置，默认为随机
-    if (key === "captcha_enabled" && value === "true") {
-      if (!newConfigs.captcha_type) {
-        newConfigs.captcha_type = "RANDOM";
-      }
-    }
+    const newConfigs = { ...configs, [key]: value };
 
     setConfigs(newConfigs);
 

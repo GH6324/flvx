@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,9 +26,6 @@ type Handler struct {
 	repo      *sqlite.Repository
 	jwtSecret string
 	wsServer  *ws.Server
-
-	captchaMu     sync.Mutex
-	captchaTokens map[string]int64
 
 	jobsMu      sync.Mutex
 	jobsCancel  context.CancelFunc
@@ -65,10 +63,9 @@ type flowItem struct {
 
 func New(repo *sqlite.Repository, jwtSecret string) *Handler {
 	return &Handler{
-		repo:          repo,
-		jwtSecret:     jwtSecret,
-		wsServer:      ws.NewServer(repo, jwtSecret),
-		captchaTokens: make(map[string]int64),
+		repo:      repo,
+		jwtSecret: jwtSecret,
+		wsServer:  ws.NewServer(repo, jwtSecret),
 	}
 }
 
@@ -88,8 +85,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/config/update", h.updateConfigs)
 	mux.HandleFunc("/api/v1/config/update-single", h.updateSingleConfig)
 	mux.HandleFunc("/api/v1/captcha/check", h.checkCaptcha)
-	mux.HandleFunc("/api/v1/captcha/generate", h.captchaGenerate)
-	mux.HandleFunc("/api/v1/captcha/verify", h.captchaVerify)
 	mux.HandleFunc("/api/v1/user/package", h.userPackage)
 	mux.HandleFunc("/api/v1/user/updatePassword", h.updatePassword)
 	mux.HandleFunc("/api/v1/node/list", h.nodeList)
@@ -181,13 +176,22 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
-	if captchaEnabled && strings.TrimSpace(req.CaptchaID) == "" {
-		response.WriteJSON(w, response.ErrDefault("验证码校验失败"))
-		return
-	}
-	if captchaEnabled && !h.consumeCaptchaToken(req.CaptchaID) {
-		response.WriteJSON(w, response.ErrDefault("验证码校验失败"))
-		return
+	if captchaEnabled {
+		if strings.TrimSpace(req.CaptchaID) == "" {
+			response.WriteJSON(w, response.ErrDefault("验证码校验失败"))
+			return
+		}
+
+		secretCfg, err := h.repo.GetConfigByName("cloudflare_secret_key")
+		if err != nil || secretCfg == nil || secretCfg.Value == "" {
+			response.WriteJSON(w, response.ErrDefault("验证码配置错误：未配置Secret Key"))
+			return
+		}
+
+		if !h.verifyCloudflareTurnstile(req.CaptchaID, secretCfg.Value) {
+			response.WriteJSON(w, response.ErrDefault("验证码校验失败"))
+			return
+		}
 	}
 
 	user, err := h.repo.GetUserByUsername(req.Username)
@@ -960,4 +964,25 @@ func readAndDecryptFlowBody(body io.ReadCloser, secret string) (string, error) {
 		return text, nil
 	}
 	return string(plain), nil
+}
+
+func (h *Handler) verifyCloudflareTurnstile(token, secretKey string) bool {
+	if token == "" || secretKey == "" {
+		return false
+	}
+	resp, err := http.PostForm("https://challenges.cloudflare.com/turnstile/v0/siteverify", url.Values{
+		"secret":   {secretKey},
+		"response": {token},
+	})
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Success bool `json:"success"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return false
+	}
+	return body.Success
 }

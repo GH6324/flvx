@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"sort"
@@ -249,58 +250,6 @@ func (h *Handler) userResetFlow(w http.ResponseWriter, r *http.Request) {
 		_, _ = db.Exec(`UPDATE user_tunnel SET in_flow = 0, out_flow = 0 WHERE id = ?`, id)
 	}
 	response.WriteJSON(w, response.OKEmpty())
-}
-
-func (h *Handler) captchaGenerate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"success":false,"message":"bad request"}`))
-		return
-	}
-	token := randomToken(16)
-	payload := map[string]interface{}{
-		"id": token,
-		"data": map[string]interface{}{
-			"id": token,
-		},
-		"success": true,
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(payload)
-}
-
-func (h *Handler) captchaVerify(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"success":false,"message":"bad request"}`))
-		return
-	}
-	var req map[string]interface{}
-	if err := decodeJSON(r.Body, &req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"success":false,"message":"bad request"}`))
-		return
-	}
-	id := asString(req["captchaId"])
-	if id == "" {
-		id = asString(req["id"])
-	}
-	trackData := asString(req["data"])
-	if trackData == "" {
-		trackData = asString(req["trackData"])
-	}
-	if id == "" || trackData == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"success":false,"message":"bad request"}`))
-		return
-	}
-	h.storeCaptchaToken(id)
-	payload := map[string]interface{}{
-		"success": true,
-		"data":    map[string]interface{}{"validToken": id},
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func (h *Handler) nodeCreate(w http.ResponseWriter, r *http.Request) {
@@ -589,6 +538,31 @@ func (h *Handler) tunnelCreate(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSON(w, response.OKEmpty())
 }
 
+func (h *Handler) cleanupTunnelRuntime(tunnelID int64) {
+	tunnel, err := h.getTunnelRecord(tunnelID)
+	if err != nil || tunnel.Type != 2 {
+		return
+	}
+	chainRows, err := h.listChainNodesForTunnel(tunnelID)
+	if err != nil {
+		return
+	}
+
+	serviceName := fmt.Sprintf("%d_tls", tunnelID)
+	chainName := fmt.Sprintf("chains_%d", tunnelID)
+
+	for _, row := range chainRows {
+		if row.ChainType == 1 {
+			_, _ = h.sendNodeCommand(row.NodeID, "DeleteChains", map[string]interface{}{"chain": chainName}, false, true)
+		} else if row.ChainType == 2 {
+			_, _ = h.sendNodeCommand(row.NodeID, "DeleteChains", map[string]interface{}{"chain": chainName}, false, true)
+			_, _ = h.sendNodeCommand(row.NodeID, "DeleteService", map[string]interface{}{"services": []string{serviceName}}, false, true)
+		} else if row.ChainType == 3 {
+			_, _ = h.sendNodeCommand(row.NodeID, "DeleteService", map[string]interface{}{"services": []string{serviceName}}, false, true)
+		}
+	}
+}
+
 func (h *Handler) tunnelGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.WriteJSON(w, response.ErrDefault("请求失败"))
@@ -627,19 +601,34 @@ func (h *Handler) tunnelUpdate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.ErrDefault("隧道ID不能为空"))
 		return
 	}
+
+	h.cleanupTunnelRuntime(id)
+
 	now := time.Now().UnixMilli()
-	_, err := h.repo.DB().Exec(`UPDATE tunnel SET name=?, type=?, flow=?, traffic_ratio=?, status=?, in_ip=?, updated_time=? WHERE id=?`,
-		asString(req["name"]), asInt(req["type"], 1), asInt64(req["flow"], 1), asFloat(req["trafficRatio"], 1.0), asInt(req["status"], 1), nullableText(asString(req["inIp"])), now, id)
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
+	typeVal := asInt(req["type"], 1)
+
 	tx, err := h.repo.DB().Begin()
 	if err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	runtimeState, err := h.prepareTunnelCreateState(tx, req, typeVal)
+	if err != nil {
+		response.WriteJSON(w, response.ErrDefault(err.Error()))
+		return
+	}
+	runtimeState.TunnelID = id
+	applyTunnelPortsToRequest(req, runtimeState)
+
+	_, err = tx.Exec(`UPDATE tunnel SET name=?, type=?, flow=?, traffic_ratio=?, status=?, in_ip=?, updated_time=? WHERE id=?`,
+		asString(req["name"]), typeVal, asInt64(req["flow"], 1), asFloat(req["trafficRatio"], 1.0), asInt(req["status"], 1), nullableText(asString(req["inIp"])), now, id)
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+
 	if _, err := tx.Exec(`DELETE FROM chain_tunnel WHERE tunnel_id = ?`, id); err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
@@ -652,6 +641,16 @@ func (h *Handler) tunnelUpdate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
+
+	if typeVal == 2 {
+		createdChains, createdServices, applyErr := h.applyTunnelRuntime(runtimeState)
+		if applyErr != nil {
+			h.rollbackTunnelRuntime(createdChains, createdServices, id)
+			response.WriteJSON(w, response.ErrDefault(applyErr.Error()))
+			return
+		}
+	}
+
 	response.WriteJSON(w, response.OKEmpty())
 }
 
@@ -664,6 +663,7 @@ func (h *Handler) tunnelDelete(w http.ResponseWriter, r *http.Request) {
 	if id <= 0 {
 		return
 	}
+	h.cleanupTunnelRuntime(id)
 	if err := h.deleteTunnelByID(id); err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
@@ -721,6 +721,7 @@ func (h *Handler) tunnelBatchDelete(w http.ResponseWriter, r *http.Request) {
 	success := 0
 	fail := 0
 	for _, id := range ids {
+		h.cleanupTunnelRuntime(id)
 		if err := h.deleteTunnelByID(id); err != nil {
 			fail++
 		} else {
@@ -948,6 +949,11 @@ func (h *Handler) forwardUpdate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
+	oldPorts, err := h.listForwardPorts(id)
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
 
 	tunnelID := asInt64(req["tunnelId"], forward.TunnelID)
 	if tunnelID <= 0 {
@@ -1000,13 +1006,19 @@ func (h *Handler) forwardUpdate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
-	_ = h.replaceForwardPorts(id, tunnelID, port)
+	if err := h.replaceForwardPorts(id, tunnelID, port); err != nil {
+		h.rollbackForwardMutation(forward, oldPorts)
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
 	updatedForward, err := h.getForwardRecord(id)
 	if err != nil {
+		h.rollbackForwardMutation(forward, oldPorts)
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
 	if err := h.syncForwardServices(updatedForward, "UpdateService", true); err != nil {
+		h.rollbackForwardMutation(forward, oldPorts)
 		response.WriteJSON(w, response.ErrDefault(err.Error()))
 		return
 	}
@@ -1291,6 +1303,11 @@ func (h *Handler) forwardBatchChangeTunnel(w http.ResponseWriter, r *http.Reques
 			fail++
 			continue
 		}
+		oldPorts, listPortsErr := h.listForwardPorts(id)
+		if listPortsErr != nil {
+			fail++
+			continue
+		}
 		var port sql.NullInt64
 		_ = h.repo.DB().QueryRow(`SELECT MIN(port) FROM forward_port WHERE forward_id = ?`, id).Scan(&port)
 		_, err := h.repo.DB().Exec(`UPDATE forward SET tunnel_id = ?, updated_time = ? WHERE id = ?`, req.TargetTunnelID, time.Now().UnixMilli(), id)
@@ -1305,13 +1322,19 @@ func (h *Handler) forwardBatchChangeTunnel(w http.ResponseWriter, r *http.Reques
 		if p <= 0 {
 			p = h.pickTunnelPort(req.TargetTunnelID)
 		}
-		_ = h.replaceForwardPorts(id, req.TargetTunnelID, p)
+		if err := h.replaceForwardPorts(id, req.TargetTunnelID, p); err != nil {
+			h.rollbackForwardMutation(forward, oldPorts)
+			fail++
+			continue
+		}
 		updatedForward, fetchErr := h.getForwardRecord(id)
 		if fetchErr != nil {
+			h.rollbackForwardMutation(forward, oldPorts)
 			fail++
 			continue
 		}
 		if err := h.syncForwardServices(updatedForward, "UpdateService", true); err != nil {
+			h.rollbackForwardMutation(forward, oldPorts)
 			fail++
 			continue
 		}
@@ -2377,28 +2400,127 @@ func (h *Handler) tunnelEntryNodeIDs(tunnelID int64) ([]int64, error) {
 }
 
 func (h *Handler) pickTunnelPort(tunnelID int64) int {
-	entry, _ := h.tunnelEntryNodeIDs(tunnelID)
-	if len(entry) == 0 {
+	entryNodes, err := h.tunnelEntryNodeIDs(tunnelID)
+	if err != nil || len(entryNodes) == 0 {
 		return 10000
 	}
-	var portRange string
-	_ = h.repo.DB().QueryRow(`SELECT port FROM node WHERE id = ?`, entry[0]).Scan(&portRange)
-	if portRange == "" {
-		return 10000
-	}
-	first := strings.Split(portRange, ",")[0]
-	first = strings.TrimSpace(first)
-	if strings.Contains(first, "-") {
-		parts := strings.SplitN(first, "-", 2)
-		p, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
-		if p > 0 {
-			return p
+
+	var commonAvailable []int
+	firstNode := true
+
+	for _, nodeID := range entryNodes {
+		var portRange string
+		if err := h.repo.DB().QueryRow("SELECT port FROM node WHERE id = ?", nodeID).Scan(&portRange); err != nil {
+			continue
+		}
+		if portRange == "" {
+			portRange = "1000-65535"
+		}
+
+		nodePorts, err := parsePorts(portRange)
+		if err != nil {
+			continue
+		}
+
+		used, err := h.getUsedPorts(nodeID)
+		if err != nil {
+			continue
+		}
+
+		var available []int
+		for _, p := range nodePorts {
+			if !used[p] {
+				available = append(available, p)
+			}
+		}
+
+		if firstNode {
+			commonAvailable = available
+			firstNode = false
+		} else {
+			set := make(map[int]bool)
+			for _, p := range available {
+				set[p] = true
+			}
+			var newCommon []int
+			for _, p := range commonAvailable {
+				if set[p] {
+					newCommon = append(newCommon, p)
+				}
+			}
+			commonAvailable = newCommon
+		}
+
+		if len(commonAvailable) == 0 {
+			break
 		}
 	}
-	if p, err := strconv.Atoi(first); err == nil && p > 0 {
-		return p
+
+	if len(commonAvailable) > 0 {
+		idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(commonAvailable))))
+		return commonAvailable[idx.Int64()]
 	}
+
 	return 10000
+}
+
+func (h *Handler) getUsedPorts(nodeID int64) (map[int]bool, error) {
+	used := make(map[int]bool)
+	rows, err := h.repo.DB().Query("SELECT port FROM forward_port WHERE node_id = ?", nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p int
+		if err := rows.Scan(&p); err == nil {
+			used[p] = true
+		}
+	}
+	rows2, err := h.repo.DB().Query("SELECT port FROM chain_tunnel WHERE node_id = ? AND port > 0", nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var p int
+		if err := rows2.Scan(&p); err == nil {
+			used[p] = true
+		}
+	}
+	return used, nil
+}
+
+func parsePorts(portRange string) ([]int, error) {
+	var ports []int
+	parts := strings.Split(portRange, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "-") {
+			rangeParts := strings.Split(part, "-")
+			if len(rangeParts) != 2 {
+				return nil, errors.New("invalid port range format")
+			}
+			start, err1 := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
+			end, err2 := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
+			if err1 != nil || err2 != nil || start > end {
+				return nil, errors.New("invalid port range values")
+			}
+			for i := start; i <= end; i++ {
+				ports = append(ports, i)
+			}
+		} else {
+			p, err := strconv.Atoi(part)
+			if err != nil {
+				return nil, errors.New("invalid port value")
+			}
+			ports = append(ports, p)
+		}
+	}
+	return ports, nil
 }
 
 func (h *Handler) replaceForwardPorts(forwardID, tunnelID int64, port int) error {
@@ -2407,12 +2529,56 @@ func (h *Handler) replaceForwardPorts(forwardID, tunnelID int64, port int) error
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, _ = tx.Exec(`DELETE FROM forward_port WHERE forward_id = ?`, forwardID)
-	entryNodes, _ := h.tunnelEntryNodeIDs(tunnelID)
+	if _, err := tx.Exec(`DELETE FROM forward_port WHERE forward_id = ?`, forwardID); err != nil {
+		return err
+	}
+	entryNodes, err := h.tunnelEntryNodeIDs(tunnelID)
+	if err != nil {
+		return err
+	}
 	for _, nodeID := range entryNodes {
-		_, _ = tx.Exec(`INSERT INTO forward_port(forward_id, node_id, port) VALUES(?, ?, ?)`, forwardID, nodeID, port)
+		if _, err := tx.Exec(`INSERT INTO forward_port(forward_id, node_id, port) VALUES(?, ?, ?)`, forwardID, nodeID, port); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
+}
+
+func (h *Handler) replaceForwardPortsWithRecords(forwardID int64, ports []forwardPortRecord) error {
+	tx, err := h.repo.DB().Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`DELETE FROM forward_port WHERE forward_id = ?`, forwardID); err != nil {
+		return err
+	}
+	for _, fp := range ports {
+		if _, err := tx.Exec(`INSERT INTO forward_port(forward_id, node_id, port) VALUES(?, ?, ?)`, forwardID, fp.NodeID, fp.Port); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (h *Handler) rollbackForwardMutation(oldForward *forwardRecord, oldPorts []forwardPortRecord) {
+	if h == nil || oldForward == nil || h.repo == nil || h.repo.DB() == nil {
+		return
+	}
+
+	_, _ = h.repo.DB().Exec(`
+		UPDATE forward
+		SET user_id = ?, user_name = ?, name = ?, tunnel_id = ?, remote_addr = ?, strategy = ?, status = ?, updated_time = ?
+		WHERE id = ?
+	`, oldForward.UserID, oldForward.UserName, oldForward.Name, oldForward.TunnelID, oldForward.RemoteAddr, oldForward.Strategy, oldForward.Status, time.Now().UnixMilli(), oldForward.ID)
+
+	if err := h.replaceForwardPortsWithRecords(oldForward.ID, oldPorts); err != nil {
+		return
+	}
+
+	_ = h.syncForwardServices(oldForward, "UpdateService", true)
 }
 
 func (h *Handler) upsertUserTunnel(req map[string]interface{}) error {
@@ -2423,38 +2589,100 @@ func (h *Handler) upsertUserTunnel(req map[string]interface{}) error {
 	}
 	db := h.repo.DB()
 	var existingID int64
-	err := db.QueryRow(`SELECT id FROM user_tunnel WHERE user_id = ? AND tunnel_id = ? LIMIT 1`, userID, tunnelID).Scan(&existingID)
-	flow := asInt64(req["flow"], -1)
-	num := asInt(req["num"], -1)
-	expTime := asInt64(req["expTime"], -1)
-	flowReset := asInt64(req["flowResetTime"], -1)
-	status := asInt(req["status"], 1)
+	var currentFlow, currentNum, currentExpTime, currentFlowReset int64
+	var currentSpeedID sql.NullInt64
+	var currentStatus int
+
+	err := db.QueryRow(`
+		SELECT id, flow, num, exp_time, flow_reset_time, speed_id, status 
+		FROM user_tunnel 
+		WHERE user_id = ? AND tunnel_id = ? 
+		LIMIT 1
+	`, userID, tunnelID).Scan(&existingID, &currentFlow, &currentNum, &currentExpTime, &currentFlowReset, &currentSpeedID, &currentStatus)
+
 	speedID := asAnyToInt64Ptr(req["speedId"])
+	reqFlow := asInt64(req["flow"], -1)
+	reqNum := asInt(req["num"], -1)
+	reqExpTime := asInt64(req["expTime"], -1)
+	reqFlowReset := asInt64(req["flowResetTime"], -1)
+	reqStatus := asInt(req["status"], -1)
+
 	if err == sql.ErrNoRows {
-		if flow < 0 || num < 0 || expTime < 0 || flowReset < 0 {
-			_ = db.QueryRow(`SELECT flow, num, exp_time, flow_reset_time FROM user WHERE id = ?`, userID).Scan(&flow, &num, &expTime, &flowReset)
+		if reqFlow < 0 || reqNum < 0 || reqExpTime < 0 || reqFlowReset < 0 {
+			var uFlow, uNum, uExp, uReset int64
+			if uErr := db.QueryRow(`SELECT flow, num, exp_time, flow_reset_time FROM user WHERE id = ?`, userID).Scan(&uFlow, &uNum, &uExp, &uReset); uErr == nil {
+				if reqFlow < 0 {
+					reqFlow = uFlow
+				}
+				if reqNum < 0 {
+					reqNum = int(uNum)
+				}
+				if reqExpTime < 0 {
+					reqExpTime = uExp
+				}
+				if reqFlowReset < 0 {
+					reqFlowReset = uReset
+				}
+			}
 		}
+		if reqFlow < 0 {
+			reqFlow = 0
+		}
+		if reqNum < 0 {
+			reqNum = 0
+		}
+		if reqExpTime < 0 {
+			reqExpTime = time.Now().Add(365 * 24 * time.Hour).UnixMilli()
+		}
+		if reqFlowReset < 0 {
+			reqFlowReset = 1
+		}
+		if reqStatus < 0 {
+			reqStatus = 1
+		}
+
 		_, err = db.Exec(`INSERT INTO user_tunnel(user_id, tunnel_id, speed_id, num, flow, in_flow, out_flow, flow_reset_time, exp_time, status) VALUES(?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
-			userID, tunnelID, nullableInt(speedID), num, flow, flowReset, expTime, status)
+			userID, tunnelID, nullableInt(speedID), reqNum, reqFlow, reqFlowReset, reqExpTime, reqStatus)
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	if flow < 0 {
-		flow = 0
+
+	newFlow := currentFlow
+	if reqFlow >= 0 {
+		newFlow = reqFlow
 	}
-	if num < 0 {
-		num = 0
+
+	newNum := int(currentNum)
+	if reqNum >= 0 {
+		newNum = reqNum
 	}
-	if expTime < 0 {
-		expTime = time.Now().Add(365 * 24 * time.Hour).UnixMilli()
+
+	newExpTime := currentExpTime
+	if reqExpTime >= 0 {
+		newExpTime = reqExpTime
 	}
-	if flowReset < 0 {
-		flowReset = 1
+
+	newFlowReset := currentFlowReset
+	if reqFlowReset >= 0 {
+		newFlowReset = reqFlowReset
 	}
+
+	newStatus := currentStatus
+	if reqStatus >= 0 {
+		newStatus = reqStatus
+	}
+
+	newSpeedID := currentSpeedID
+	if speedID != nil {
+		newSpeedID = sql.NullInt64{Int64: *speedID, Valid: true}
+	} else if _, ok := req["speedId"]; ok {
+		newSpeedID = sql.NullInt64{Valid: false}
+	}
+
 	_, err = db.Exec(`UPDATE user_tunnel SET speed_id = ?, flow = ?, num = ?, exp_time = ?, flow_reset_time = ?, status = ? WHERE id = ?`,
-		nullableInt(speedID), flow, num, expTime, flowReset, status, existingID)
+		newSpeedID, newFlow, newNum, newExpTime, newFlowReset, newStatus, existingID)
 	return err
 }
 

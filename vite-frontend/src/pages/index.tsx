@@ -1,55 +1,21 @@
 import { Button } from "@heroui/button";
 import { Input } from "@heroui/input";
 import { Card, CardBody, CardHeader } from "@heroui/card";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
-import axios from "axios";
+import Turnstile from "react-turnstile";
 
 import { isWebViewFunc } from "@/utils/panel";
 import { siteConfig } from "@/config/site";
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
-import { login, LoginData, checkCaptcha } from "@/api";
-import "@/utils/tac.css";
-import "@/utils/tac.min.js";
-import bgImage from "@/images/bg.jpg";
+import { login, LoginData, checkCaptcha, getConfigByName } from "@/api";
 
 interface LoginForm {
   username: string;
   password: string;
   captchaId: string;
-}
-
-interface CaptchaConfig {
-  requestCaptchaDataUrl: string;
-  validCaptchaUrl: string;
-  bindEl: string;
-  validSuccess: (res: any, captcha: any, tac: any) => void;
-  validFail?: (res: any, captcha: any, tac: any) => void;
-  btnCloseFun?: (event: any, tac: any) => void;
-  btnRefreshFun?: (event: any, tac: any) => void;
-}
-
-interface CaptchaStyle {
-  btnUrl?: string;
-  bgUrl?: string;
-  logoUrl?: string | null;
-  moveTrackMaskBgColor?: string;
-  moveTrackMaskBorderColor?: string;
-}
-
-interface CaptchaGeneratePayload {
-  id?: string;
-  captcha?: {
-    type?: string;
-    backgroundImage?: string;
-    templateImage?: string;
-  };
-  data?: {
-    id?: string;
-  };
-  success?: boolean;
 }
 
 export default function IndexPage() {
@@ -61,92 +27,14 @@ export default function IndexPage() {
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Partial<LoginForm>>({});
   const [showCaptcha, setShowCaptcha] = useState(false);
+  const [siteKey, setSiteKey] = useState("");
   const navigate = useNavigate();
-  const tacInstanceRef = useRef<any>(null);
-  const captchaContainerRef = useRef<HTMLDivElement>(null);
   const [isWebView, setIsWebView] = useState(false);
 
-  // 清理验证码实例
-  useEffect(() => {
-    return () => {
-      if (tacInstanceRef.current) {
-        tacInstanceRef.current.destroyWindow();
-        tacInstanceRef.current = null;
-      }
-    };
-  }, []);
   // 检测是否在WebView中运行
   useEffect(() => {
     setIsWebView(isWebViewFunc());
   }, []);
-
-  const resolveCaptchaBaseURL = () =>
-    axios.defaults.baseURL ||
-    (import.meta.env.VITE_API_BASE
-      ? `${import.meta.env.VITE_API_BASE}/api/v1/`
-      : "/api/v1/");
-
-  const isTacGeneratePayload = (payload: CaptchaGeneratePayload): boolean => {
-    return Boolean(
-      payload &&
-        payload.id &&
-        payload.captcha &&
-        typeof payload.captcha.type === "string" &&
-        payload.captcha.type.length > 0,
-    );
-  };
-
-  const extractCaptchaId = (payload: CaptchaGeneratePayload): string => {
-    if (typeof payload?.id === "string" && payload.id.trim()) {
-      return payload.id;
-    }
-    if (typeof payload?.data?.id === "string" && payload.data.id.trim()) {
-      return payload.data.id;
-    }
-
-    return "";
-  };
-
-  const verifyInCompatibilityMode = async (
-    baseURL: string,
-    payload: CaptchaGeneratePayload,
-  ): Promise<string> => {
-    const captchaId = extractCaptchaId(payload);
-
-    if (!captchaId) {
-      throw new Error("验证码初始化失败");
-    }
-
-    const verifyResp = await axios.post(
-      `${baseURL}captcha/verify`,
-      {
-        captchaId,
-        trackData: JSON.stringify({ mode: "compat", ts: Date.now() }),
-      },
-      {
-        timeout: 30000,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-
-    const verifyData = verifyResp?.data || {};
-    const success =
-      verifyData.success === true ||
-      verifyData.code === 0 ||
-      verifyData.code === 200;
-
-    if (!success) {
-      throw new Error(verifyData.msg || verifyData.message || "验证码校验失败");
-    }
-
-    const validToken =
-      verifyData?.data?.validToken &&
-      typeof verifyData.data.validToken === "string"
-        ? verifyData.data.validToken
-        : captchaId;
-
-    return validToken;
-  };
 
   // 验证表单
   const validateForm = (): boolean => {
@@ -176,86 +64,6 @@ export default function IndexPage() {
     }
   };
 
-  // 初始化验证码
-  const initCaptcha = async () => {
-    try {
-      // 清理之前的验证码实例
-      if (tacInstanceRef.current) {
-        tacInstanceRef.current.destroyWindow();
-        tacInstanceRef.current = null;
-      }
-
-      const baseURL = resolveCaptchaBaseURL();
-      const hasTacRenderer = Boolean(window.TAC && captchaContainerRef.current);
-
-      const generateResp = await axios.post<CaptchaGeneratePayload>(
-        `${baseURL}captcha/generate`,
-        {},
-        {
-          timeout: 30000,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-      const generatePayload = generateResp?.data || {};
-
-      if (!hasTacRenderer || !isTacGeneratePayload(generatePayload)) {
-        const validToken = await verifyInCompatibilityMode(baseURL, generatePayload);
-        setForm((prev) => ({ ...prev, captchaId: validToken }));
-        setShowCaptcha(false);
-        await performLogin(validToken);
-
-        return;
-      }
-
-      const config: CaptchaConfig = {
-        requestCaptchaDataUrl: `${baseURL}captcha/generate`,
-        validCaptchaUrl: `${baseURL}captcha/verify`,
-        bindEl: "#captcha-container",
-        validSuccess: (res: any, _: any, tac: any) => {
-          const validToken = res?.data?.validToken || "";
-          setForm((prev) => ({ ...prev, captchaId: validToken }));
-          setShowCaptcha(false);
-          tac.destroyWindow();
-          void performLogin(validToken);
-        },
-        validFail: (_: any, _captcha: any, tac: any) => {
-          tac.reloadCaptcha();
-        },
-        btnCloseFun: (_event: any, tac: any) => {
-          setShowCaptcha(false);
-          tac.destroyWindow();
-          setLoading(false);
-        },
-        btnRefreshFun: (_event: any, tac: any) => {
-          tac.reloadCaptcha();
-        },
-      };
-
-      // 检测暗黑模式
-      const isDarkMode =
-        document.documentElement.classList.contains("dark") ||
-        document.documentElement.getAttribute("data-theme") === "dark" ||
-        window.matchMedia("(prefers-color-scheme: dark)").matches;
-
-      // 根据主题调整颜色
-      const trackColor = isDarkMode ? "#4a5568" : "#7db0be"; // 暗黑模式使用更深的灰蓝色
-
-      const style: CaptchaStyle = {
-        bgUrl: bgImage,
-        logoUrl: null,
-        moveTrackMaskBgColor: trackColor,
-        moveTrackMaskBorderColor: trackColor,
-      };
-
-      tacInstanceRef.current = new window.TAC(config, style);
-      tacInstanceRef.current.init();
-    } catch {
-      toast.error("验证码初始化失败，请刷新页面重试");
-      setShowCaptcha(false);
-      setLoading(false);
-    }
-  };
-
   // 执行登录请求
   const performLogin = async (captchaToken?: string) => {
     try {
@@ -274,7 +82,9 @@ export default function IndexPage() {
 
       if (response.code !== 0) {
         toast.error(response.msg || "登录失败");
-
+        if (showCaptcha) {
+           setForm((prev) => ({ ...prev, captchaId: "" }));
+        }
         return;
       }
 
@@ -324,15 +134,21 @@ export default function IndexPage() {
 
       // 根据返回值决定是否显示验证码
       if (checkResponse.data === 0) {
-        // 不需要验证码，直接登录
         await performLogin();
       } else {
-        // 需要验证码，显示验证码弹层
-        setShowCaptcha(true);
-        // 延时初始化验证码，确保DOM已渲染
-        setTimeout(() => {
-          initCaptcha();
-        }, 100);
+        const configResp = await getConfigByName("cloudflare_site_key");
+
+        if (
+          configResp.code === 0 &&
+          configResp.data &&
+          configResp.data.value
+        ) {
+          setSiteKey(configResp.data.value);
+          setShowCaptcha(true);
+        } else {
+          toast.error("未配置Cloudflare Site Key，请联系管理员");
+          setLoading(false);
+        }
       }
     } catch (error) {
       toast.error("网络错误，请稍后重试" + error);
@@ -422,26 +238,50 @@ export default function IndexPage() {
         </div>
 
         {/* 验证码弹层 */}
-        {showCaptcha && (
+        {showCaptcha && siteKey && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             {/* 背景遮罩层 - 模糊效果，暗黑模式下更深 */}
-            <div className="absolute inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm captcha-backdrop-enter" />
+            <div 
+              className="absolute inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm captcha-backdrop-enter"
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                setShowCaptcha(false);
+                setLoading(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  setShowCaptcha(false);
+                  setLoading(false);
+                }
+              }}
+            />
             {/* 验证码容器 */}
-            <div className="mb-4">
-              <div
-                ref={captchaContainerRef}
-                className="w-full flex justify-center"
-                id="captcha-container"
-                style={{
-                  filter:
+            <div className="mb-4 relative z-50 bg-white dark:bg-zinc-900 p-6 rounded-lg shadow-xl">
+              <div className="mb-4 text-center text-sm font-medium text-gray-700 dark:text-gray-200">请完成安全验证</div>
+              <div className="flex justify-center">
+                <Turnstile
+                  sitekey={siteKey}
+                  onVerify={(token) => {
+                    setForm((prev) => ({ ...prev, captchaId: token }));
+                    void performLogin(token);
+                  }}
+                  onError={() => {
+                    toast.error("验证失败，请刷新重试");
+                    setLoading(false);
+                  }}
+                  onExpire={() => {
+                     setForm((prev) => ({ ...prev, captchaId: "" }));
+                  }}
+                  theme={
                     document.documentElement.classList.contains("dark") ||
-                    document.documentElement.getAttribute("data-theme") ===
-                      "dark" ||
+                    document.documentElement.getAttribute("data-theme") === "dark" ||
                     window.matchMedia("(prefers-color-scheme: dark)").matches
-                      ? "brightness(0.8) contrast(0.9)"
-                      : "none",
-                }}
-              />
+                      ? "dark"
+                      : "light"
+                  }
+                />
+              </div>
             </div>
           </div>
         )}
