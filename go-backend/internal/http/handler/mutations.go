@@ -251,58 +251,6 @@ func (h *Handler) userResetFlow(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSON(w, response.OKEmpty())
 }
 
-func (h *Handler) captchaGenerate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"success":false,"message":"bad request"}`))
-		return
-	}
-	token := randomToken(16)
-	payload := map[string]interface{}{
-		"id": token,
-		"data": map[string]interface{}{
-			"id": token,
-		},
-		"success": true,
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(payload)
-}
-
-func (h *Handler) captchaVerify(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"success":false,"message":"bad request"}`))
-		return
-	}
-	var req map[string]interface{}
-	if err := decodeJSON(r.Body, &req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"success":false,"message":"bad request"}`))
-		return
-	}
-	id := asString(req["captchaId"])
-	if id == "" {
-		id = asString(req["id"])
-	}
-	trackData := asString(req["data"])
-	if trackData == "" {
-		trackData = asString(req["trackData"])
-	}
-	if id == "" || trackData == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"success":false,"message":"bad request"}`))
-		return
-	}
-	h.storeCaptchaToken(id)
-	payload := map[string]interface{}{
-		"success": true,
-		"data":    map[string]interface{}{"validToken": id},
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(payload)
-}
-
 func (h *Handler) nodeCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.WriteJSON(w, response.ErrDefault("请求失败"))
@@ -589,6 +537,31 @@ func (h *Handler) tunnelCreate(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSON(w, response.OKEmpty())
 }
 
+func (h *Handler) cleanupTunnelRuntime(tunnelID int64) {
+	tunnel, err := h.getTunnelRecord(tunnelID)
+	if err != nil || tunnel.Type != 2 {
+		return
+	}
+	chainRows, err := h.listChainNodesForTunnel(tunnelID)
+	if err != nil {
+		return
+	}
+
+	serviceName := fmt.Sprintf("%d_tls", tunnelID)
+	chainName := fmt.Sprintf("chains_%d", tunnelID)
+
+	for _, row := range chainRows {
+		if row.ChainType == 1 {
+			_, _ = h.sendNodeCommand(row.NodeID, "DeleteChains", map[string]interface{}{"chain": chainName}, false, true)
+		} else if row.ChainType == 2 {
+			_, _ = h.sendNodeCommand(row.NodeID, "DeleteChains", map[string]interface{}{"chain": chainName}, false, true)
+			_, _ = h.sendNodeCommand(row.NodeID, "DeleteService", map[string]interface{}{"services": []string{serviceName}}, false, true)
+		} else if row.ChainType == 3 {
+			_, _ = h.sendNodeCommand(row.NodeID, "DeleteService", map[string]interface{}{"services": []string{serviceName}}, false, true)
+		}
+	}
+}
+
 func (h *Handler) tunnelGet(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.WriteJSON(w, response.ErrDefault("请求失败"))
@@ -627,19 +600,34 @@ func (h *Handler) tunnelUpdate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.ErrDefault("隧道ID不能为空"))
 		return
 	}
+
+	h.cleanupTunnelRuntime(id)
+
 	now := time.Now().UnixMilli()
-	_, err := h.repo.DB().Exec(`UPDATE tunnel SET name=?, type=?, flow=?, traffic_ratio=?, status=?, in_ip=?, updated_time=? WHERE id=?`,
-		asString(req["name"]), asInt(req["type"], 1), asInt64(req["flow"], 1), asFloat(req["trafficRatio"], 1.0), asInt(req["status"], 1), nullableText(asString(req["inIp"])), now, id)
-	if err != nil {
-		response.WriteJSON(w, response.Err(-2, err.Error()))
-		return
-	}
+	typeVal := asInt(req["type"], 1)
+
 	tx, err := h.repo.DB().Begin()
 	if err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	runtimeState, err := h.prepareTunnelCreateState(tx, req, typeVal)
+	if err != nil {
+		response.WriteJSON(w, response.ErrDefault(err.Error()))
+		return
+	}
+	runtimeState.TunnelID = id
+	applyTunnelPortsToRequest(req, runtimeState)
+
+	_, err = tx.Exec(`UPDATE tunnel SET name=?, type=?, flow=?, traffic_ratio=?, status=?, in_ip=?, updated_time=? WHERE id=?`,
+		asString(req["name"]), typeVal, asInt64(req["flow"], 1), asFloat(req["trafficRatio"], 1.0), asInt(req["status"], 1), nullableText(asString(req["inIp"])), now, id)
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+
 	if _, err := tx.Exec(`DELETE FROM chain_tunnel WHERE tunnel_id = ?`, id); err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
@@ -652,6 +640,16 @@ func (h *Handler) tunnelUpdate(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
+
+	if typeVal == 2 {
+		createdChains, createdServices, applyErr := h.applyTunnelRuntime(runtimeState)
+		if applyErr != nil {
+			h.rollbackTunnelRuntime(createdChains, createdServices, id)
+			response.WriteJSON(w, response.ErrDefault(applyErr.Error()))
+			return
+		}
+	}
+
 	response.WriteJSON(w, response.OKEmpty())
 }
 
@@ -664,6 +662,7 @@ func (h *Handler) tunnelDelete(w http.ResponseWriter, r *http.Request) {
 	if id <= 0 {
 		return
 	}
+	h.cleanupTunnelRuntime(id)
 	if err := h.deleteTunnelByID(id); err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
@@ -721,6 +720,7 @@ func (h *Handler) tunnelBatchDelete(w http.ResponseWriter, r *http.Request) {
 	success := 0
 	fail := 0
 	for _, id := range ids {
+		h.cleanupTunnelRuntime(id)
 		if err := h.deleteTunnelByID(id); err != nil {
 			fail++
 		} else {
