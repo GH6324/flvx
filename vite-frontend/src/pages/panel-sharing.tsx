@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Tabs, Tab } from "@heroui/tabs";
@@ -250,7 +250,7 @@ export default function PanelSharingPage() {
               onChange={(e) => setShareForm({ ...shareForm, nodeId: e.target.value })}
             >
               {nodes.map((node) => (
-                <SelectItem key={node.id} value={node.id.toString()}>
+                <SelectItem key={node.id} textValue={node.name}>
                   {node.name}
                 </SelectItem>
               ))}
