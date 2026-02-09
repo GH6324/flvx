@@ -234,9 +234,9 @@ func (h *Handler) getNodeRecord(nodeID int64) (*nodeRecord, error) {
 	return &n, nil
 }
 
-func (h *Handler) resolveUserTunnelAndLimiter(userID, tunnelID int64) (int64, *int, error) {
+func (h *Handler) resolveUserTunnelAndLimiter(userID, tunnelID int64) (int64, *int64, error) {
 	row := h.repo.DB().QueryRow(`
-		SELECT ut.id, sl.speed
+		SELECT ut.id, sl.id
 		FROM user_tunnel ut
 		LEFT JOIN speed_limit sl ON sl.id = ut.speed_id
 		WHERE ut.user_id = ? AND ut.tunnel_id = ?
@@ -244,18 +244,18 @@ func (h *Handler) resolveUserTunnelAndLimiter(userID, tunnelID int64) (int64, *i
 		LIMIT 1
 	`, userID, tunnelID)
 	var userTunnelID int64
-	var speed sql.NullInt64
-	err := row.Scan(&userTunnelID, &speed)
+	var limiterID sql.NullInt64
+	err := row.Scan(&userTunnelID, &limiterID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil, nil
 		}
 		return 0, nil, err
 	}
-	if !speed.Valid || speed.Int64 <= 0 {
+	if !limiterID.Valid || limiterID.Int64 <= 0 {
 		return userTunnelID, nil, nil
 	}
-	v := int(speed.Int64)
+	v := limiterID.Int64
 	return userTunnelID, &v, nil
 }
 
@@ -328,7 +328,7 @@ func (h *Handler) syncForwardServices(forward *forwardRecord, method string, all
 		return errors.New("转发入口端口不存在")
 	}
 
-	userTunnelID, limiter, err := h.resolveUserTunnelAndLimiter(forward.UserID, forward.TunnelID)
+	userTunnelID, limiterID, err := h.resolveUserTunnelAndLimiter(forward.UserID, forward.TunnelID)
 	if err != nil {
 		return err
 	}
@@ -339,7 +339,7 @@ func (h *Handler) syncForwardServices(forward *forwardRecord, method string, all
 		if err != nil {
 			return err
 		}
-		services := buildForwardServiceConfigs(serviceBase, forward, tunnel, node, fp.Port, limiter)
+		services := buildForwardServiceConfigs(serviceBase, forward, tunnel, node, fp.Port, limiterID)
 		_, err = h.sendNodeCommand(node.ID, method, services, true, false)
 		if err != nil && allowFallbackAdd && method == "UpdateService" {
 			_, err = h.sendNodeCommand(node.ID, "AddService", services, true, false)
@@ -1003,7 +1003,7 @@ func isNotFoundError(err error) bool {
 	return strings.Contains(msg, "not found") || strings.Contains(msg, "不存在")
 }
 
-func buildForwardServiceConfigs(baseName string, forward *forwardRecord, tunnel *tunnelRecord, node *nodeRecord, port int, limiter *int) []map[string]interface{} {
+func buildForwardServiceConfigs(baseName string, forward *forwardRecord, tunnel *tunnelRecord, node *nodeRecord, port int, limiterID *int64) []map[string]interface{} {
 	protocols := []string{"tcp", "udp"}
 	services := make([]map[string]interface{}, 0, 2)
 	targets := splitRemoteTargets(forward.RemoteAddr)
@@ -1044,11 +1044,8 @@ func buildForwardServiceConfigs(baseName string, forward *forwardRecord, tunnel 
 		if tunnel != nil && tunnel.Type == 1 && strings.TrimSpace(node.InterfaceName) != "" {
 			service["metadata"] = map[string]interface{}{"interface": node.InterfaceName}
 		}
-		if limiter != nil && *limiter > 0 {
-			// Convert Mbps to Bytes/s
-			// 1 Mbps = 1,000,000 bits/s = 125,000 Bytes/s
-			// We use decimal Mbps standard as is common in networking
-			service["limiter"] = strconv.Itoa(*limiter * 125000)
+		if limiterID != nil && *limiterID > 0 {
+			service["limiter"] = strconv.FormatInt(*limiterID, 10)
 		}
 		services = append(services, service)
 	}
@@ -1110,4 +1107,40 @@ func asBool(v interface{}, def bool) bool {
 	default:
 		return def
 	}
+}
+
+func (h *Handler) sendLimiterConfig(limiterID int64, speedMbps int, tunnelID int64) error {
+	rate := float64(speedMbps) / 8.0
+	limitStr := fmt.Sprintf("$ %.1fMB %.1fMB", rate, rate)
+
+	payload := map[string]interface{}{
+		"name":   strconv.FormatInt(limiterID, 10),
+		"limits": []string{limitStr},
+	}
+
+	nodes, err := h.tunnelEntryNodeIDs(tunnelID)
+	if err != nil {
+		return err
+	}
+
+	for _, nodeID := range nodes {
+		_, _ = h.sendNodeCommand(nodeID, "AddLimiters", payload, false, false)
+	}
+	return nil
+}
+
+func (h *Handler) sendDeleteLimiterConfig(limiterID int64, tunnelID int64) error {
+	payload := map[string]interface{}{
+		"limiter": strconv.FormatInt(limiterID, 10),
+	}
+
+	nodes, err := h.tunnelEntryNodeIDs(tunnelID)
+	if err != nil {
+		return err
+	}
+
+	for _, nodeID := range nodes {
+		_, _ = h.sendNodeCommand(nodeID, "DeleteLimiters", payload, false, true)
+	}
+	return nil
 }
