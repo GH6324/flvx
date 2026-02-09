@@ -190,7 +190,7 @@ func ParseService(cfg *config.ServiceConfig) (service.Service, error) {
 			// Try to parse as simple number (bandwidth in bytes/sec)
 			if val, err := strconv.Atoi(cfg.Limiter); err == nil && val > 0 {
 				lim = xtraffic.NewTrafficLimiter(
-					xtraffic.LimitsOption(fmt.Sprintf("%s %d %d", xtraffic.ServiceLimitKey, val, val)),
+					xtraffic.LimitsOption(fmt.Sprintf("%s %dB %dB", xtraffic.ServiceLimitKey, val, val)),
 				)
 			}
 			if lim == nil {
