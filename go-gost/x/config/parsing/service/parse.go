@@ -211,13 +211,15 @@ func ParseService(cfg *config.ServiceConfig) (service.Service, error) {
 		listener.AuthOption(auth_parser.Info(cfg.Listener.Auth)),
 		listener.TLSConfigOption(tlsConfig),
 		listener.AdmissionOption(xadmission.AdmissionGroup(admissions...)),
-		trafficLimiter,
 		listener.ConnLimiterOption(registry.ConnLimiterRegistry().Get(cfg.CLimiter)),
 		listener.ServiceOption(cfg.Name),
 		listener.ProxyProtocolOption(ppv),
 		listener.StatsOption(pStats),
 		listener.NetnsOption(netnsIn),
 		listener.LoggerOption(listenerLogger),
+	}
+	if trafficLimiter != nil {
+		listenOpts = append(listenOpts, trafficLimiter)
 	}
 
 	if netnsIn != "" {
