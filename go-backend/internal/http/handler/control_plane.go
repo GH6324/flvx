@@ -59,6 +59,8 @@ type chainNodeRecord struct {
 	NodeID    int64
 	Port      int
 	NodeName  string
+	Protocol  string
+	Strategy  string
 }
 
 type diagnosisTarget struct {
@@ -862,7 +864,7 @@ func firstPortFromRange(portRange string) int {
 
 func (h *Handler) listChainNodesForTunnel(tunnelID int64) ([]chainNodeRecord, error) {
 	rows, err := h.repo.DB().Query(`
-		SELECT ct.chain_type, COALESCE(ct.inx, 0), ct.node_id, COALESCE(ct.port, 0), n.name
+		SELECT ct.chain_type, COALESCE(ct.inx, 0), ct.node_id, COALESCE(ct.port, 0), n.name, ct.protocol, ct.strategy
 		FROM chain_tunnel ct
 		LEFT JOIN node n ON n.id = ct.node_id
 		WHERE ct.tunnel_id = ?
@@ -877,7 +879,9 @@ func (h *Handler) listChainNodesForTunnel(tunnelID int64) ([]chainNodeRecord, er
 	for rows.Next() {
 		var item chainNodeRecord
 		var name sql.NullString
-		if err := rows.Scan(&item.ChainType, &item.Inx, &item.NodeID, &item.Port, &name); err != nil {
+		var protocol sql.NullString
+		var strategy sql.NullString
+		if err := rows.Scan(&item.ChainType, &item.Inx, &item.NodeID, &item.Port, &name, &protocol, &strategy); err != nil {
 			return nil, err
 		}
 		if strings.TrimSpace(name.String) == "" {
@@ -885,6 +889,8 @@ func (h *Handler) listChainNodesForTunnel(tunnelID int64) ([]chainNodeRecord, er
 		} else {
 			item.NodeName = name.String
 		}
+		item.Protocol = defaultString(protocol.String, "tls")
+		item.Strategy = defaultString(strategy.String, "round")
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -1039,7 +1045,10 @@ func buildForwardServiceConfigs(baseName string, forward *forwardRecord, tunnel 
 			service["metadata"] = map[string]interface{}{"interface": node.InterfaceName}
 		}
 		if limiter != nil && *limiter > 0 {
-			service["limiter"] = strconv.Itoa(*limiter)
+			// Convert Mbps to Bytes/s
+			// 1 Mbps = 1,000,000 bits/s = 125,000 Bytes/s
+			// We use decimal Mbps standard as is common in networking
+			service["limiter"] = strconv.Itoa(*limiter * 125000)
 		}
 		services = append(services, service)
 	}

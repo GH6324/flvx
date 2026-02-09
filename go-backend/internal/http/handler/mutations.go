@@ -731,6 +731,82 @@ func (h *Handler) tunnelBatchDelete(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSON(w, response.OK(map[string]interface{}{"successCount": success, "failCount": fail}))
 }
 
+func (h *Handler) reconstructTunnelState(tunnelID int64) (*tunnelCreateState, error) {
+	tunnel, err := h.getTunnelRecord(tunnelID)
+	if err != nil {
+		return nil, err
+	}
+
+	chainRows, err := h.listChainNodesForTunnel(tunnelID)
+	if err != nil {
+		return nil, err
+	}
+
+	state := &tunnelCreateState{
+		TunnelID:   tunnelID,
+		Type:       tunnel.Type,
+		InNodes:    make([]tunnelRuntimeNode, 0),
+		ChainHops:  make([][]tunnelRuntimeNode, 0),
+		OutNodes:   make([]tunnelRuntimeNode, 0),
+		Nodes:      make(map[int64]*nodeRecord),
+		NodeIDList: make([]int64, 0),
+	}
+
+	inNodes, chainHops, outNodes := splitChainNodeGroups(chainRows)
+
+	for _, r := range inNodes {
+		state.InNodes = append(state.InNodes, tunnelRuntimeNode{
+			NodeID:    r.NodeID,
+			Protocol:  r.Protocol,
+			Strategy:  r.Strategy,
+			ChainType: 1,
+		})
+		state.NodeIDList = append(state.NodeIDList, r.NodeID)
+	}
+
+	for _, r := range outNodes {
+		state.OutNodes = append(state.OutNodes, tunnelRuntimeNode{
+			NodeID:    r.NodeID,
+			Protocol:  r.Protocol,
+			Strategy:  r.Strategy,
+			ChainType: 3,
+			Port:      r.Port,
+		})
+		state.NodeIDList = append(state.NodeIDList, r.NodeID)
+	}
+
+	for _, hop := range chainHops {
+		stateHop := make([]tunnelRuntimeNode, 0)
+		for _, r := range hop {
+			stateHop = append(stateHop, tunnelRuntimeNode{
+				NodeID:    r.NodeID,
+				Protocol:  r.Protocol,
+				Strategy:  r.Strategy,
+				ChainType: 2,
+				Inx:       int(r.Inx),
+				Port:      r.Port,
+			})
+			state.NodeIDList = append(state.NodeIDList, r.NodeID)
+		}
+		state.ChainHops = append(state.ChainHops, stateHop)
+	}
+
+	seen := make(map[int64]struct{})
+	for _, id := range state.NodeIDList {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		node, err := h.getNodeRecord(id)
+		if err != nil {
+			return nil, err
+		}
+		state.Nodes[id] = node
+	}
+
+	return state, nil
+}
+
 func (h *Handler) tunnelBatchRedeploy(w http.ResponseWriter, r *http.Request) {
 	ids := idsFromBody(r, w)
 	if ids == nil {
@@ -739,6 +815,26 @@ func (h *Handler) tunnelBatchRedeploy(w http.ResponseWriter, r *http.Request) {
 	success := 0
 	fail := 0
 	for _, tunnelID := range ids {
+		tunnel, err := h.getTunnelRecord(tunnelID)
+		if err != nil {
+			fail++
+			continue
+		}
+
+		if tunnel.Type == 2 {
+			h.cleanupTunnelRuntime(tunnelID)
+			state, err := h.reconstructTunnelState(tunnelID)
+			if err != nil {
+				fail++
+				continue
+			}
+			_, _, applyErr := h.applyTunnelRuntime(state)
+			if applyErr != nil {
+				fail++
+				continue
+			}
+		}
+
 		forwards, err := h.listForwardsByTunnel(tunnelID)
 		if err != nil {
 			fail++
