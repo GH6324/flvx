@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Tabs, Tab } from "@heroui/tabs";
@@ -23,6 +23,7 @@ import {
 interface Node {
   id: number;
   name: string;
+  isRemote?: number;
 }
 
 interface PeerShare {
@@ -63,14 +64,7 @@ export default function PanelSharingPage() {
     token: "",
   });
 
-  useEffect(() => {
-    if (selectedTab === "my-shares") {
-      loadShares();
-      loadNodes();
-    }
-  }, [selectedTab]);
-
-  const loadShares = async () => {
+  const loadShares = useCallback(async () => {
     setLoading(true);
     try {
       const res = await getPeerShareList();
@@ -82,22 +76,46 @@ export default function PanelSharingPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const loadNodes = async () => {
+  const loadNodes = useCallback(async () => {
     try {
       const res = await getNodeList();
       if (res.code === 0) {
-        setNodes(res.data || []);
+        const localNodes: Node[] = (res.data || []).filter(
+          (node: Node) => (node?.isRemote ?? 0) !== 1,
+        );
+        setNodes(localNodes);
+        setShareForm((prev) => {
+          if (!prev.nodeId) {
+            return prev;
+          }
+          const hasSelectedNode = localNodes.some(
+            (node: Node) => String(node.id) === prev.nodeId,
+          );
+          return hasSelectedNode ? prev : { ...prev, nodeId: "" };
+        });
       }
     } catch {
       // ignore
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (selectedTab === "my-shares") {
+      loadShares();
+      loadNodes();
+    }
+  }, [selectedTab, loadShares, loadNodes]);
 
   const handleCreateShare = async () => {
     if (!shareForm.name || !shareForm.nodeId) {
       toast.error("请填写必要信息");
+      return;
+    }
+    const nodeId = parseInt(shareForm.nodeId, 10);
+    if (Number.isNaN(nodeId) || !nodes.some((node) => node.id === nodeId)) {
+      toast.error("仅可选择本地节点");
       return;
     }
     try {
@@ -105,7 +123,7 @@ export default function PanelSharingPage() {
         Date.now() + shareForm.expiryDays * 24 * 60 * 60 * 1000;
       const res = await createPeerShare({
         name: shareForm.name,
-        nodeId: parseInt(shareForm.nodeId),
+        nodeId,
         maxBandwidth: shareForm.maxBandwidth * 1024 * 1024 * 1024,
         expiryTime: shareForm.expiryDays === 0 ? 0 : expiryTime,
         portRangeStart: shareForm.portRangeStart,
@@ -249,7 +267,7 @@ export default function PanelSharingPage() {
             />
             <Select
               label="选择节点"
-              placeholder="选择要分享的节点"
+              placeholder="选择要分享的本地节点"
               selectedKeys={shareForm.nodeId ? [shareForm.nodeId] : []}
               onChange={(e) => setShareForm({ ...shareForm, nodeId: e.target.value })}
             >

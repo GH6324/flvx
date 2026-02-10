@@ -132,6 +132,10 @@ func (h *Handler) federationShareCreate(w http.ResponseWriter, r *http.Request) 
 		response.WriteJSON(w, response.ErrDefault("Node not found"))
 		return
 	}
+	if node.IsRemote == 1 {
+		response.WriteJSON(w, response.ErrDefault("Only local nodes can be shared"))
+		return
+	}
 
 	now := time.Now().UnixMilli()
 	token := randomToken(32)
