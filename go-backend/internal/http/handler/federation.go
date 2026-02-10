@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ type createPeerShareRequest struct {
 	PortRangeStart int    `json:"portRangeStart"`
 	PortRangeEnd   int    `json:"portRangeEnd"`
 	AllowedDomains string `json:"allowedDomains"`
+	AllowedIPs     string `json:"allowedIps"`
 }
 
 type deletePeerShareRequest struct {
@@ -63,6 +65,13 @@ type federationRuntimeReleaseRoleRequest struct {
 	BindingID     string `json:"bindingId"`
 	ReservationID string `json:"reservationId"`
 	ResourceKey   string `json:"resourceKey"`
+}
+
+type federationRuntimeDiagnoseRequest struct {
+	IP      string `json:"ip"`
+	Port    int    `json:"port"`
+	Count   int    `json:"count"`
+	Timeout int    `json:"timeout"`
 }
 
 func (h *Handler) federationShareList(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +125,12 @@ func (h *Handler) federationShareCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	allowedIPs, err := normalizePeerShareAllowedIPs(req.AllowedIPs)
+	if err != nil {
+		response.WriteJSON(w, response.ErrDefault(err.Error()))
+		return
+	}
+
 	node, err := h.repo.GetNodeByID(req.NodeID)
 	if err != nil {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
@@ -123,6 +138,10 @@ func (h *Handler) federationShareCreate(w http.ResponseWriter, r *http.Request) 
 	}
 	if node == nil {
 		response.WriteJSON(w, response.ErrDefault("Node not found"))
+		return
+	}
+	if node.IsRemote == 1 {
+		response.WriteJSON(w, response.ErrDefault("Only local nodes can be shared"))
 		return
 	}
 
@@ -141,6 +160,7 @@ func (h *Handler) federationShareCreate(w http.ResponseWriter, r *http.Request) 
 		CreatedTime:    now,
 		UpdatedTime:    now,
 		AllowedDomains: req.AllowedDomains,
+		AllowedIPs:     allowedIPs,
 	}
 
 	if err := h.repo.CreatePeerShare(share); err != nil {
@@ -281,6 +301,18 @@ func (h *Handler) authPeer(next http.HandlerFunc) http.HandlerFunc {
 		if share.ExpiryTime > 0 && share.ExpiryTime < time.Now().UnixMilli() {
 			response.WriteJSON(w, response.Err(403, "Share expired"))
 			return
+		}
+
+		if strings.TrimSpace(share.AllowedIPs) != "" {
+			clientIP := resolvePeerClientIP(r)
+			if clientIP == nil {
+				response.WriteJSON(w, response.Err(403, "Unable to determine client IP"))
+				return
+			}
+			if !isPeerIPAllowed(clientIP, share.AllowedIPs) {
+				response.WriteJSON(w, response.Err(403, "IP not allowed"))
+				return
+			}
 		}
 
 		if share.AllowedDomains != "" {
@@ -731,6 +763,55 @@ func (h *Handler) federationRuntimeReleaseRole(w http.ResponseWriter, r *http.Re
 	response.WriteJSON(w, response.OKEmpty())
 }
 
+func (h *Handler) federationRuntimeDiagnose(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("Invalid method"))
+		return
+	}
+
+	token := extractBearerToken(r)
+	share, err := h.repo.GetPeerShareByToken(token)
+	if err != nil || share == nil {
+		response.WriteJSON(w, response.Err(401, "Unauthorized"))
+		return
+	}
+
+	var req federationRuntimeDiagnoseRequest
+	if err := decodeJSON(r.Body, &req); err != nil {
+		response.WriteJSON(w, response.ErrDefault("Invalid JSON"))
+		return
+	}
+
+	req.IP = strings.TrimSpace(req.IP)
+	if req.IP == "" || req.Port <= 0 || req.Port > 65535 {
+		response.WriteJSON(w, response.ErrDefault("Invalid target"))
+		return
+	}
+	if req.Count <= 0 {
+		req.Count = 4
+	}
+	if req.Timeout <= 0 {
+		req.Timeout = 5000
+	}
+
+	res, err := h.sendNodeCommand(share.NodeID, "TcpPing", map[string]interface{}{
+		"ip":      req.IP,
+		"port":    req.Port,
+		"count":   req.Count,
+		"timeout": req.Timeout,
+	}, false, false)
+	if err != nil {
+		response.WriteJSON(w, response.ErrDefault(err.Error()))
+		return
+	}
+	if res.Data == nil {
+		response.WriteJSON(w, response.ErrDefault("Node did not return diagnosis data"))
+		return
+	}
+
+	response.WriteJSON(w, response.OK(res.Data))
+}
+
 func (h *Handler) pickPeerSharePort(share *sqlite.PeerShare, requestedPort int) (int, error) {
 	if share == nil {
 		return 0, fmt.Errorf("share not found")
@@ -802,4 +883,131 @@ func extractBearerToken(r *http.Request) string {
 		return parts[1]
 	}
 	return ""
+}
+
+func normalizePeerShareAllowedIPs(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+
+	parts := strings.Split(raw, ",")
+	normalized := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item == "" {
+			continue
+		}
+
+		if strings.Contains(item, "/") {
+			_, network, err := net.ParseCIDR(item)
+			if err != nil {
+				return "", fmt.Errorf("Invalid allowed IP or CIDR: %s", item)
+			}
+			item = network.String()
+		} else {
+			ip := parseIPLiteral(item)
+			if ip == nil {
+				return "", fmt.Errorf("Invalid allowed IP or CIDR: %s", item)
+			}
+			item = ip.String()
+		}
+
+		if _, exists := seen[item]; exists {
+			continue
+		}
+		seen[item] = struct{}{}
+		normalized = append(normalized, item)
+	}
+
+	return strings.Join(normalized, ","), nil
+}
+
+func resolvePeerClientIP(r *http.Request) net.IP {
+	if r == nil {
+		return nil
+	}
+
+	remoteIP := parseIPLiteral(r.RemoteAddr)
+	if isTrustedProxyIP(remoteIP) {
+		if ip := parseForwardedFor(r.Header.Get("X-Forwarded-For")); ip != nil {
+			return ip
+		}
+		if ip := parseIPLiteral(r.Header.Get("X-Real-IP")); ip != nil {
+			return ip
+		}
+	}
+
+	return remoteIP
+}
+
+func parseForwardedFor(raw string) net.IP {
+	for _, part := range strings.Split(raw, ",") {
+		if ip := parseIPLiteral(part); ip != nil {
+			return ip
+		}
+	}
+	return nil
+}
+
+func parseIPLiteral(raw string) net.IP {
+	value := strings.Trim(strings.TrimSpace(raw), "\"")
+	if value == "" {
+		return nil
+	}
+
+	if ip := net.ParseIP(value); ip != nil {
+		return ip
+	}
+
+	host, _, err := net.SplitHostPort(value)
+	if err != nil {
+		return nil
+	}
+
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
+		return nil
+	}
+	return net.ParseIP(host)
+}
+
+func isTrustedProxyIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+func isPeerIPAllowed(clientIP net.IP, whitelist string) bool {
+	if clientIP == nil {
+		return false
+	}
+
+	for _, part := range strings.Split(whitelist, ",") {
+		entry := strings.TrimSpace(part)
+		if entry == "" {
+			continue
+		}
+
+		if strings.Contains(entry, "/") {
+			_, network, err := net.ParseCIDR(entry)
+			if err != nil {
+				continue
+			}
+			if network.Contains(clientIP) {
+				return true
+			}
+			continue
+		}
+
+		allowedIP := parseIPLiteral(entry)
+		if allowedIP != nil && allowedIP.Equal(clientIP) {
+			return true
+		}
+	}
+
+	return false
 }

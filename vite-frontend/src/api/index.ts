@@ -198,6 +198,7 @@ export const createPeerShare = (data: {
   portRangeStart?: number;
   portRangeEnd?: number;
   allowedDomains?: string;
+  allowedIps?: string;
 }) => Network.post("/federation/share/create", data);
 export const deletePeerShare = (id: number) =>
   Network.post("/federation/share/delete", { id });

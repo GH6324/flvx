@@ -199,7 +199,8 @@ CREATE TABLE IF NOT EXISTS peer_share (
     is_active INTEGER DEFAULT 1,
     created_time INTEGER NOT NULL,
     updated_time INTEGER NOT NULL,
-    allowed_domains TEXT DEFAULT ''
+    allowed_domains TEXT DEFAULT '',
+    allowed_ips TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS peer_share_runtime (
