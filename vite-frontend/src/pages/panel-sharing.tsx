@@ -297,6 +297,7 @@ export default function PanelSharingPage() {
       </div>
 
       <Tabs
+        disableCursorAnimation
         aria-label="Options"
         selectedKey={selectedTab}
         onSelectionChange={(k) => setSelectedTab(k as string)}
