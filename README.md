@@ -2,7 +2,7 @@
 
 > 📞 **联系我们**: [Telegram群组](https://t.me/flvxpanel)
 
-本项目由 [flux](https://github.com/bqlpfy/flux-panel)二次开发 。
+本项目来自[flux](https://github.com/bqlpfy/flux-panel)二次开发 。
 ---
 ## 特性
 
