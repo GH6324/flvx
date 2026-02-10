@@ -38,16 +38,21 @@ func (h *Handler) processFlowItem(item flowItem) {
 	}
 
 	forwardID, userID, userTunnelID, ok := parseFlowServiceIDs(serviceName)
-	if !ok {
+	if ok {
+		inFlow, outFlow := h.scaleFlowByTunnel(forwardID, item.D, item.U)
+		_ = h.repo.AddFlow(forwardID, userID, userTunnelID, inFlow, outFlow)
+
+		if userTunnelID > 0 {
+			h.enforceFlowPolicies(userID, userTunnelID)
+		}
 		return
 	}
 
-	inFlow, outFlow := h.scaleFlowByTunnel(forwardID, item.D, item.U)
-	_ = h.repo.AddFlow(forwardID, userID, userTunnelID, inFlow, outFlow)
-
-	if userTunnelID > 0 {
-		h.enforceFlowPolicies(userID, userTunnelID)
+	runtimeID, ok := parsePeerShareRuntimeServiceID(serviceName)
+	if !ok {
+		return
 	}
+	h.processPeerShareFlow(runtimeID, item)
 }
 
 func parseFlowServiceIDs(serviceName string) (int64, int64, int64, bool) {
@@ -64,6 +69,72 @@ func parseFlowServiceIDs(serviceName string) (int64, int64, int64, bool) {
 	}
 
 	return forwardID, userID, userTunnelID, true
+}
+
+func parsePeerShareRuntimeServiceID(serviceName string) (int64, bool) {
+	const prefix = "fed_svc_"
+	if !strings.HasPrefix(serviceName, prefix) {
+		return 0, false
+	}
+	raw := strings.TrimPrefix(serviceName, prefix)
+	if raw == "" {
+		return 0, false
+	}
+	parts := strings.SplitN(raw, "_", 2)
+	runtimeID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || runtimeID <= 0 {
+		return 0, false
+	}
+	return runtimeID, true
+}
+
+func (h *Handler) processPeerShareFlow(runtimeID int64, item flowItem) {
+	if h == nil || h.repo == nil || runtimeID <= 0 {
+		return
+	}
+	runtime, err := h.repo.GetPeerShareRuntimeByID(runtimeID)
+	if err != nil || runtime == nil || runtime.ShareID <= 0 || runtime.Status != 1 {
+		return
+	}
+
+	delta := item.D + item.U
+	if delta <= 0 {
+		return
+	}
+
+	_ = h.repo.AddPeerShareCurrentFlow(runtime.ShareID, delta)
+
+	share, err := h.repo.GetPeerShare(runtime.ShareID)
+	if err != nil || share == nil {
+		return
+	}
+	if !isPeerShareFlowExceeded(share) {
+		return
+	}
+	h.enforcePeerShareFlowLimit(share.ID)
+}
+
+func (h *Handler) enforcePeerShareFlowLimit(shareID int64) {
+	if h == nil || h.repo == nil || shareID <= 0 {
+		return
+	}
+	runtimes, err := h.repo.ListActivePeerShareRuntimesByShareID(shareID)
+	if err != nil || len(runtimes) == 0 {
+		return
+	}
+
+	now := time.Now().UnixMilli()
+	for _, runtime := range runtimes {
+		if h.wsServer != nil && runtime.Applied == 1 {
+			if strings.TrimSpace(runtime.ServiceName) != "" {
+				_, _ = h.sendNodeCommand(runtime.NodeID, "DeleteService", map[string]interface{}{"services": []string{runtime.ServiceName}}, false, true)
+			}
+			if strings.TrimSpace(runtime.Role) == "middle" && strings.TrimSpace(runtime.ChainName) != "" {
+				_, _ = h.sendNodeCommand(runtime.NodeID, "DeleteChains", map[string]interface{}{"chain": runtime.ChainName}, false, true)
+			}
+		}
+		_ = h.repo.MarkPeerShareRuntimeReleased(runtime.ID, now)
+	}
 }
 
 func (h *Handler) scaleFlowByTunnel(forwardID int64, inFlow int64, outFlow int64) (int64, int64) {

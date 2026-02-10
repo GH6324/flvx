@@ -17,6 +17,8 @@ import {
   createPeerShare,
   getPeerShareList,
   deletePeerShare,
+  resetPeerShareFlow,
+  getPeerRemoteUsageList,
   importRemoteNode,
 } from "@/api";
 
@@ -31,19 +33,61 @@ interface PeerShare {
   name: string;
   token: string;
   maxBandwidth: number;
+  currentFlow: number;
   expiryTime: number;
   portRangeStart: number;
   portRangeEnd: number;
   isActive: number;
   allowedDomains?: string;
   allowedIps?: string;
+  usedPorts?: number[];
+  usedPortDetails?: Array<{
+    runtimeId: number;
+    port: number;
+    role: string;
+    protocol: string;
+    resourceKey: string;
+    applied: number;
+    updatedTime: number;
+  }>;
+  activeRuntimeNum?: number;
+}
+
+interface RemoteUsageBinding {
+  bindingId: number;
+  tunnelId: number;
+  tunnelName: string;
+  chainType: number;
+  hopInx: number;
+  allocatedPort: number;
+  resourceKey: string;
+  remoteBindingId: string;
+  updatedTime: number;
+}
+
+interface RemoteUsageNode {
+  nodeId: number;
+  nodeName: string;
+  remoteUrl: string;
+  shareId: number;
+  portRangeStart: number;
+  portRangeEnd: number;
+  maxBandwidth: number;
+  currentFlow: number;
+  usedPorts: number[];
+  bindings: RemoteUsageBinding[];
+  activeBindingNum: number;
 }
 
 export default function PanelSharingPage() {
   const [selectedTab, setSelectedTab] = useState("my-shares");
   const [shares, setShares] = useState<PeerShare[]>([]);
+  const [remoteUsageNodes, setRemoteUsageNodes] = useState<RemoteUsageNode[]>(
+    [],
+  );
   const [nodes, setNodes] = useState<Node[]>([]);
   const [loading, setLoading] = useState(false);
+  const [remoteUsageLoading, setRemoteUsageLoading] = useState(false);
 
   // Modals
   const [createShareOpen, setCreateShareOpen] = useState(false);
@@ -103,12 +147,30 @@ export default function PanelSharingPage() {
     }
   }, []);
 
+  const loadRemoteUsage = useCallback(async () => {
+    setRemoteUsageLoading(true);
+    try {
+      const res = await getPeerRemoteUsageList();
+      if (res.code === 0) {
+        setRemoteUsageNodes(res.data || []);
+      } else {
+        toast.error(res.msg || "加载远程占用端口失败");
+      }
+    } finally {
+      setRemoteUsageLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (selectedTab === "my-shares") {
       loadShares();
       loadNodes();
+      return;
     }
-  }, [selectedTab, loadShares, loadNodes]);
+    if (selectedTab === "remote-nodes") {
+      loadRemoteUsage();
+    }
+  }, [selectedTab, loadShares, loadNodes, loadRemoteUsage]);
 
   const handleCreateShare = async () => {
     if (!shareForm.name || !shareForm.nodeId) {
@@ -120,13 +182,17 @@ export default function PanelSharingPage() {
       toast.error("仅可选择本地节点");
       return;
     }
+    if (shareForm.maxBandwidth < 0) {
+      toast.error("流量上限不能为负数");
+      return;
+    }
     try {
       const expiryTime =
         Date.now() + shareForm.expiryDays * 24 * 60 * 60 * 1000;
       const res = await createPeerShare({
         name: shareForm.name,
         nodeId,
-        maxBandwidth: shareForm.maxBandwidth * 1024 * 1024 * 1024,
+        maxBandwidth: Math.max(0, shareForm.maxBandwidth) * 1024 * 1024 * 1024,
         expiryTime: shareForm.expiryDays === 0 ? 0 : expiryTime,
         portRangeStart: shareForm.portRangeStart,
         portRangeEnd: shareForm.portRangeEnd,
@@ -159,6 +225,20 @@ export default function PanelSharingPage() {
     }
   };
 
+  const handleResetShareFlow = async (id: number) => {
+    try {
+      const res = await resetPeerShareFlow(id);
+      if (res.code === 0) {
+        toast.success("共享流量已重置");
+        loadShares();
+      } else {
+        toast.error(res.msg || "重置流量失败");
+      }
+    } catch {
+      toast.error("网络错误");
+    }
+  };
+
   const handleImportNode = async () => {
     if (!importForm.remoteUrl || !importForm.token) {
       toast.error("请填写完整信息");
@@ -179,6 +259,7 @@ export default function PanelSharingPage() {
         toast.success("导入成功，请前往节点列表查看");
         setImportNodeOpen(false);
         setImportForm({ remoteUrl: "", token: "" });
+        loadRemoteUsage();
       } else {
         toast.error(res.msg || "导入失败");
       }
@@ -190,6 +271,23 @@ export default function PanelSharingPage() {
   const copyToken = (token: string) => {
     navigator.clipboard.writeText(token);
     toast.success("Token已复制");
+  };
+
+  const formatFlowGB = (bytes: number) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+      return "0.00 GB";
+    }
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  };
+
+  const formatChainType = (chainType: number, hopInx: number) => {
+    if (chainType === 2) {
+      return `中继跳点 #${hopInx}`;
+    }
+    if (chainType === 3) {
+      return "出口节点";
+    }
+    return "未知链路";
   };
 
   return (
@@ -222,10 +320,31 @@ export default function PanelSharingPage() {
                     <Card key={share.id} className="border border-divider shadow-sm">
                       <CardHeader className="flex justify-between">
                         <h3 className="font-bold">{share.name}</h3>
-                        <Button size="sm" color="danger" variant="flat" onPress={() => handleDeleteShare(share.id)}>删除</Button>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="flat"
+                            onPress={() => handleResetShareFlow(share.id)}
+                          >
+                            重置流量
+                          </Button>
+                          <Button size="sm" color="danger" variant="flat" onPress={() => handleDeleteShare(share.id)}>删除</Button>
+                        </div>
                       </CardHeader>
                       <CardBody className="text-sm space-y-2">
                         <p>端口范围: {share.portRangeStart} - {share.portRangeEnd}</p>
+                        <p>流量上限: {share.maxBandwidth > 0 ? formatFlowGB(share.maxBandwidth) : "不限制"}</p>
+                        <p>当前流量: {formatFlowGB(share.currentFlow || 0)}</p>
+                        <p>远程占用端口: {share.usedPorts && share.usedPorts.length > 0 ? share.usedPorts.join(", ") : "暂无"}</p>
+                        {share.usedPortDetails && share.usedPortDetails.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {share.usedPortDetails.map((item) => (
+                              <span key={item.runtimeId} className="text-xs rounded-full px-2 py-1 bg-default-100">
+                                {item.port} / {item.role || "reserved"}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         {share.allowedDomains && <p>允许域名: {share.allowedDomains}</p>}
                         {share.allowedIps && <p>允许API IP: {share.allowedIps}</p>}
                         <p>过期时间: {share.expiryTime === 0 ? "永久" : new Date(share.expiryTime).toLocaleDateString()}</p>
@@ -249,10 +368,46 @@ export default function PanelSharingPage() {
                   导入远程节点
                 </Button>
               </div>
-              <div className="text-center py-10 text-gray-500">
-                <p>已导入的节点将显示在“节点管理”页面，带有“远程”标记。</p>
-                <p className="mt-2">请使用其创建隧道。</p>
-              </div>
+
+              {remoteUsageLoading ? (
+                <div className="text-center py-10 text-gray-500">加载中...</div>
+              ) : remoteUsageNodes.length === 0 ? (
+                <div className="text-center py-10 text-gray-500">
+                  <p>暂无远程节点占用记录。</p>
+                  <p className="mt-2">导入远程节点并创建隧道后，这里会显示远端端口占用情况。</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {remoteUsageNodes.map((node) => (
+                    <Card key={node.nodeId} className="border border-divider shadow-sm">
+                      <CardHeader className="flex justify-between">
+                        <h3 className="font-bold">{node.nodeName}</h3>
+                        <span className="text-xs text-default-500">绑定 {node.activeBindingNum || 0}</span>
+                      </CardHeader>
+                      <CardBody className="text-sm space-y-2">
+                        {node.remoteUrl && <p>远程地址: {node.remoteUrl}</p>}
+                        <p>共享ID: {node.shareId || "-"}</p>
+                        <p>端口范围: {node.portRangeStart > 0 && node.portRangeEnd > 0 ? `${node.portRangeStart} - ${node.portRangeEnd}` : "-"}</p>
+                        <p>共享流量: {node.maxBandwidth > 0 ? `${formatFlowGB(node.currentFlow || 0)} / ${formatFlowGB(node.maxBandwidth)}` : `${formatFlowGB(node.currentFlow || 0)} / 不限制`}</p>
+                        <p>远端占用端口: {node.usedPorts && node.usedPorts.length > 0 ? node.usedPorts.join(", ") : "暂无"}</p>
+                        {node.bindings && node.bindings.length > 0 && (
+                          <div className="space-y-1 pt-1">
+                            {node.bindings.map((binding) => (
+                              <p key={binding.bindingId} className="text-xs text-default-600">
+                                隧道 {binding.tunnelName || `#${binding.tunnelId}`}
+                                {" · "}
+                                端口 {binding.allocatedPort}
+                                {" · "}
+                                {formatChainType(binding.chainType, binding.hopInx)}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </CardBody>
+                    </Card>
+                  ))}
+                </div>
+              )}
             </CardBody>
           </Card>
         </Tab>
@@ -301,6 +456,13 @@ export default function PanelSharingPage() {
               description="0 表示永久"
               value={shareForm.expiryDays.toString()}
               onChange={(e) => setShareForm({ ...shareForm, expiryDays: parseInt(e.target.value) })}
+            />
+            <Input
+              label="流量上限 (GB)"
+              type="number"
+              description="0 表示不限流量"
+              value={shareForm.maxBandwidth.toString()}
+              onChange={(e) => setShareForm({ ...shareForm, maxBandwidth: parseInt(e.target.value, 10) || 0 })}
             />
             <Input
               label="允许的域名 (可选)"

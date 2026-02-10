@@ -21,6 +21,7 @@ type RemoteNodeInfo struct {
 	ServerIP       string `json:"serverIp"`
 	Status         int    `json:"status"`
 	MaxBandwidth   int64  `json:"maxBandwidth"`
+	CurrentFlow    int64  `json:"currentFlow"`
 	ExpiryTime     int64  `json:"expiryTime"`
 	PortRangeStart int    `json:"portRangeStart"`
 	PortRangeEnd   int    `json:"portRangeEnd"`

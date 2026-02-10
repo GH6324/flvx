@@ -1,10 +1,15 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"go-backend/internal/http/response"
 	"go-backend/internal/store/sqlite"
 )
 
@@ -144,5 +149,62 @@ func TestPrepareTunnelCreateStateRemoteAutoPortDefersToFederation(t *testing.T) 
 	}
 	if state.OutNodes[0].Port != 0 {
 		t.Fatalf("expected remote out port to remain 0 before federation reserve, got %d", state.OutNodes[0].Port)
+	}
+}
+
+func TestFederationRuntimeReservePortRejectsWhenShareFlowExceeded(t *testing.T) {
+	repo, err := sqlite.Open(filepath.Join(t.TempDir(), "panel.db"))
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	defer repo.Close()
+
+	h := &Handler{repo: repo}
+	now := time.Now().UnixMilli()
+
+	if err := repo.CreatePeerShare(&sqlite.PeerShare{
+		Name:           "limited-share",
+		NodeID:         1,
+		Token:          "limited-token",
+		MaxBandwidth:   2048,
+		CurrentFlow:    2048,
+		PortRangeStart: 30000,
+		PortRangeEnd:   30010,
+		IsActive:       1,
+		CreatedTime:    now,
+		UpdatedTime:    now,
+	}); err != nil {
+		t.Fatalf("create share: %v", err)
+	}
+
+	body, err := json.Marshal(map[string]interface{}{
+		"resourceKey":   "tunnel:1:node:1:type:3:hop:0",
+		"protocol":      "tls",
+		"requestedPort": 0,
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/federation/runtime/reserve-port", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer limited-token")
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+
+	h.federationRuntimeReservePort(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+	}
+
+	var payload response.R
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Code != 403 {
+		t.Fatalf("expected response code 403, got %d (%s)", payload.Code, payload.Msg)
+	}
+	if payload.Msg != "Share traffic limit exceeded" {
+		t.Fatalf("unexpected response message: %q", payload.Msg)
 	}
 }

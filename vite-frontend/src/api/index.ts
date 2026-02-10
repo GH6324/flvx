@@ -202,6 +202,10 @@ export const createPeerShare = (data: {
 }) => Network.post("/federation/share/create", data);
 export const deletePeerShare = (id: number) =>
   Network.post("/federation/share/delete", { id });
+export const resetPeerShareFlow = (id: number) =>
+  Network.post("/federation/share/reset-flow", { id });
+export const getPeerRemoteUsageList = () =>
+  Network.post("/federation/share/remote-usage/list");
 export const importRemoteNode = (data: {
   remoteUrl: string;
   token: string;

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,6 +33,10 @@ type createPeerShareRequest struct {
 }
 
 type deletePeerShareRequest struct {
+	ID int64 `json:"id"`
+}
+
+type resetPeerShareFlowRequest struct {
 	ID int64 `json:"id"`
 }
 
@@ -74,6 +79,49 @@ type federationRuntimeDiagnoseRequest struct {
 	Timeout int    `json:"timeout"`
 }
 
+type peerShareUsedPort struct {
+	RuntimeID   int64  `json:"runtimeId"`
+	Port        int    `json:"port"`
+	Role        string `json:"role"`
+	Protocol    string `json:"protocol"`
+	ResourceKey string `json:"resourceKey"`
+	Applied     int    `json:"applied"`
+	UpdatedTime int64  `json:"updatedTime"`
+}
+
+type peerShareListItem struct {
+	sqlite.PeerShare
+	UsedPorts        []int               `json:"usedPorts"`
+	UsedPortDetails  []peerShareUsedPort `json:"usedPortDetails"`
+	ActiveRuntimeNum int                 `json:"activeRuntimeNum"`
+}
+
+type remoteUsageBindingItem struct {
+	BindingID       int64  `json:"bindingId"`
+	TunnelID        int64  `json:"tunnelId"`
+	TunnelName      string `json:"tunnelName"`
+	ChainType       int    `json:"chainType"`
+	HopInx          int    `json:"hopInx"`
+	AllocatedPort   int    `json:"allocatedPort"`
+	ResourceKey     string `json:"resourceKey"`
+	RemoteBindingID string `json:"remoteBindingId"`
+	UpdatedTime     int64  `json:"updatedTime"`
+}
+
+type remoteUsageNodeItem struct {
+	NodeID           int64                    `json:"nodeId"`
+	NodeName         string                   `json:"nodeName"`
+	RemoteURL        string                   `json:"remoteUrl"`
+	ShareID          int64                    `json:"shareId"`
+	PortRangeStart   int                      `json:"portRangeStart"`
+	PortRangeEnd     int                      `json:"portRangeEnd"`
+	MaxBandwidth     int64                    `json:"maxBandwidth"`
+	CurrentFlow      int64                    `json:"currentFlow"`
+	UsedPorts        []int                    `json:"usedPorts"`
+	Bindings         []remoteUsageBindingItem `json:"bindings"`
+	ActiveBindingNum int                      `json:"activeBindingNum"`
+}
+
 func (h *Handler) federationShareList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.WriteJSON(w, response.ErrDefault("Invalid method"))
@@ -85,7 +133,55 @@ func (h *Handler) federationShareList(w http.ResponseWriter, r *http.Request) {
 		response.WriteJSON(w, response.Err(-2, err.Error()))
 		return
 	}
-	response.WriteJSON(w, response.OK(shares))
+
+	items := make([]peerShareListItem, 0, len(shares))
+	for i := range shares {
+		share := shares[i]
+		runtimes, err := h.repo.ListActivePeerShareRuntimesByShareID(share.ID)
+		if err != nil {
+			response.WriteJSON(w, response.Err(-2, err.Error()))
+			return
+		}
+
+		usedSet := make(map[int]struct{}, len(runtimes))
+		details := make([]peerShareUsedPort, 0, len(runtimes))
+		for _, runtime := range runtimes {
+			if runtime.Port > 0 {
+				usedSet[runtime.Port] = struct{}{}
+			}
+			details = append(details, peerShareUsedPort{
+				RuntimeID:   runtime.ID,
+				Port:        runtime.Port,
+				Role:        runtime.Role,
+				Protocol:    runtime.Protocol,
+				ResourceKey: runtime.ResourceKey,
+				Applied:     runtime.Applied,
+				UpdatedTime: runtime.UpdatedTime,
+			})
+		}
+
+		usedPorts := make([]int, 0, len(usedSet))
+		for port := range usedSet {
+			usedPorts = append(usedPorts, port)
+		}
+		sort.Ints(usedPorts)
+
+		sort.Slice(details, func(i, j int) bool {
+			if details[i].Port == details[j].Port {
+				return details[i].RuntimeID < details[j].RuntimeID
+			}
+			return details[i].Port < details[j].Port
+		})
+
+		items = append(items, peerShareListItem{
+			PeerShare:        share,
+			UsedPorts:        usedPorts,
+			UsedPortDetails:  details,
+			ActiveRuntimeNum: len(details),
+		})
+	}
+
+	response.WriteJSON(w, response.OK(items))
 }
 
 func (h *Handler) federationShareCreate(w http.ResponseWriter, r *http.Request) {
@@ -191,6 +287,153 @@ func (h *Handler) federationShareDelete(w http.ResponseWriter, r *http.Request) 
 	response.WriteJSON(w, response.OKEmpty())
 }
 
+func (h *Handler) federationShareResetFlow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("Invalid method"))
+		return
+	}
+
+	var req resetPeerShareFlowRequest
+	if err := decodeJSON(r.Body, &req); err != nil {
+		response.WriteJSON(w, response.ErrDefault("Invalid JSON"))
+		return
+	}
+	if req.ID <= 0 {
+		response.WriteJSON(w, response.ErrDefault("Share ID is required"))
+		return
+	}
+
+	share, err := h.repo.GetPeerShare(req.ID)
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	if share == nil {
+		response.WriteJSON(w, response.ErrDefault("Share not found"))
+		return
+	}
+
+	if err := h.repo.ResetPeerShareCurrentFlow(req.ID, time.Now().UnixMilli()); err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+
+	response.WriteJSON(w, response.OKEmpty())
+}
+
+func (h *Handler) federationRemoteUsageList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		response.WriteJSON(w, response.ErrDefault("Invalid method"))
+		return
+	}
+
+	rows, err := h.repo.DB().Query(`
+		SELECT id, name, remote_url, remote_config
+		FROM node
+		WHERE is_remote = 1
+		ORDER BY id DESC
+	`)
+	if err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+	defer rows.Close()
+
+	items := make([]remoteUsageNodeItem, 0)
+	for rows.Next() {
+		var (
+			nodeID       int64
+			nodeName     string
+			remoteURL    sql.NullString
+			remoteConfig sql.NullString
+		)
+		if err := rows.Scan(&nodeID, &nodeName, &remoteURL, &remoteConfig); err != nil {
+			response.WriteJSON(w, response.Err(-2, err.Error()))
+			return
+		}
+
+		shareID, maxBandwidth, currentFlow, portRangeStart, portRangeEnd := parseRemoteShareUsageConfig(remoteConfig.String)
+
+		bindingRows, err := h.repo.DB().Query(`
+			SELECT fb.id, fb.tunnel_id, COALESCE(t.name, ''), fb.chain_type, fb.hop_inx, fb.allocated_port, fb.resource_key, fb.remote_binding_id, fb.updated_time
+			FROM federation_tunnel_binding fb
+			LEFT JOIN tunnel t ON t.id = fb.tunnel_id
+			WHERE fb.node_id = ? AND fb.status = 1
+			ORDER BY fb.allocated_port ASC, fb.id ASC
+		`, nodeID)
+		if err != nil {
+			response.WriteJSON(w, response.Err(-2, err.Error()))
+			return
+		}
+
+		usedSet := make(map[int]struct{})
+		bindings := make([]remoteUsageBindingItem, 0)
+		for bindingRows.Next() {
+			var item remoteUsageBindingItem
+			if err := bindingRows.Scan(&item.BindingID, &item.TunnelID, &item.TunnelName, &item.ChainType, &item.HopInx, &item.AllocatedPort, &item.ResourceKey, &item.RemoteBindingID, &item.UpdatedTime); err != nil {
+				_ = bindingRows.Close()
+				response.WriteJSON(w, response.Err(-2, err.Error()))
+				return
+			}
+			bindings = append(bindings, item)
+			if item.AllocatedPort > 0 {
+				usedSet[item.AllocatedPort] = struct{}{}
+			}
+		}
+		if err := bindingRows.Err(); err != nil {
+			_ = bindingRows.Close()
+			response.WriteJSON(w, response.Err(-2, err.Error()))
+			return
+		}
+		_ = bindingRows.Close()
+
+		usedPorts := make([]int, 0, len(usedSet))
+		for port := range usedSet {
+			usedPorts = append(usedPorts, port)
+		}
+		sort.Ints(usedPorts)
+
+		items = append(items, remoteUsageNodeItem{
+			NodeID:           nodeID,
+			NodeName:         nodeName,
+			RemoteURL:        strings.TrimSpace(remoteURL.String),
+			ShareID:          shareID,
+			PortRangeStart:   portRangeStart,
+			PortRangeEnd:     portRangeEnd,
+			MaxBandwidth:     maxBandwidth,
+			CurrentFlow:      currentFlow,
+			UsedPorts:        usedPorts,
+			Bindings:         bindings,
+			ActiveBindingNum: len(bindings),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		response.WriteJSON(w, response.Err(-2, err.Error()))
+		return
+	}
+
+	response.WriteJSON(w, response.OK(items))
+}
+
+func parseRemoteShareUsageConfig(raw string) (int64, int64, int64, int, int) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, 0, 0, 0, 0
+	}
+
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return 0, 0, 0, 0, 0
+	}
+
+	shareID := asInt64(cfg["shareId"], 0)
+	maxBandwidth := asInt64(cfg["maxBandwidth"], 0)
+	currentFlow := asInt64(cfg["currentFlow"], 0)
+	portRangeStart := int(asInt64(cfg["portRangeStart"], 0))
+	portRangeEnd := int(asInt64(cfg["portRangeEnd"], 0))
+	return shareID, maxBandwidth, currentFlow, portRangeStart, portRangeEnd
+}
+
 func (h *Handler) nodeImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		response.WriteJSON(w, response.ErrDefault("Invalid method"))
@@ -225,6 +468,7 @@ func (h *Handler) nodeImport(w http.ResponseWriter, r *http.Request) {
 	configData := map[string]interface{}{
 		"shareId":        info.ShareID,
 		"maxBandwidth":   info.MaxBandwidth,
+		"currentFlow":    info.CurrentFlow,
 		"expiryTime":     info.ExpiryTime,
 		"portRangeStart": info.PortRangeStart,
 		"portRangeEnd":   info.PortRangeEnd,
@@ -370,6 +614,7 @@ func (h *Handler) federationConnect(w http.ResponseWriter, r *http.Request) {
 		"serverIp":       serverIP,
 		"status":         status,
 		"maxBandwidth":   share.MaxBandwidth,
+		"currentFlow":    share.CurrentFlow,
 		"expiryTime":     share.ExpiryTime,
 		"portRangeStart": share.PortRangeStart,
 		"portRangeEnd":   share.PortRangeEnd,
@@ -386,6 +631,10 @@ func (h *Handler) federationTunnelCreate(w http.ResponseWriter, r *http.Request)
 	share, err := h.repo.GetPeerShareByToken(token)
 	if err != nil || share == nil {
 		response.WriteJSON(w, response.Err(401, "Unauthorized"))
+		return
+	}
+	if isPeerShareFlowExceeded(share) {
+		response.WriteJSON(w, response.Err(403, "Share traffic limit exceeded"))
 		return
 	}
 
@@ -486,6 +735,10 @@ func (h *Handler) federationRuntimeReservePort(w http.ResponseWriter, r *http.Re
 			"allocatedPort": existing.Port,
 			"bindingId":     existing.BindingID,
 		}))
+		return
+	}
+	if isPeerShareFlowExceeded(share) {
+		response.WriteJSON(w, response.Err(403, "Share traffic limit exceeded"))
 		return
 	}
 
@@ -595,6 +848,10 @@ func (h *Handler) federationRuntimeApplyRole(w http.ResponseWriter, r *http.Requ
 			"allocatedPort": runtime.Port,
 			"reservationId": runtime.ReservationID,
 		}))
+		return
+	}
+	if isPeerShareFlowExceeded(share) {
+		response.WriteJSON(w, response.Err(403, "Share traffic limit exceeded"))
 		return
 	}
 
@@ -883,6 +1140,16 @@ func extractBearerToken(r *http.Request) string {
 		return parts[1]
 	}
 	return ""
+}
+
+func isPeerShareFlowExceeded(share *sqlite.PeerShare) bool {
+	if share == nil {
+		return false
+	}
+	if share.MaxBandwidth <= 0 {
+		return false
+	}
+	return share.CurrentFlow >= share.MaxBandwidth
 }
 
 func normalizePeerShareAllowedIPs(raw string) (string, error) {

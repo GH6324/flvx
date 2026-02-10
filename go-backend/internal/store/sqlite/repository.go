@@ -1450,6 +1450,80 @@ func (r *Repository) GetPeerShareRuntimeByBindingID(shareID int64, bindingID str
 	return &item, nil
 }
 
+func (r *Repository) GetPeerShareRuntimeByID(id int64) (*PeerShareRuntime, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+	row := r.db.QueryRow(`
+		SELECT id, share_id, node_id, reservation_id, resource_key, binding_id, role, chain_name, service_name, protocol, strategy, port, target, applied, status, created_time, updated_time
+		FROM peer_share_runtime
+		WHERE id = ?
+		LIMIT 1
+	`, id)
+	var item PeerShareRuntime
+	if err := row.Scan(&item.ID, &item.ShareID, &item.NodeID, &item.ReservationID, &item.ResourceKey, &item.BindingID, &item.Role, &item.ChainName, &item.ServiceName, &item.Protocol, &item.Strategy, &item.Port, &item.Target, &item.Applied, &item.Status, &item.CreatedTime, &item.UpdatedTime); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (r *Repository) ListActivePeerShareRuntimesByShareID(shareID int64) ([]PeerShareRuntime, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("repository not initialized")
+	}
+	rows, err := r.db.Query(`
+		SELECT id, share_id, node_id, reservation_id, resource_key, binding_id, role, chain_name, service_name, protocol, strategy, port, target, applied, status, created_time, updated_time
+		FROM peer_share_runtime
+		WHERE share_id = ? AND status = 1
+		ORDER BY port ASC, id ASC
+	`, shareID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]PeerShareRuntime, 0)
+	for rows.Next() {
+		var item PeerShareRuntime
+		if err := rows.Scan(&item.ID, &item.ShareID, &item.NodeID, &item.ReservationID, &item.ResourceKey, &item.BindingID, &item.Role, &item.ChainName, &item.ServiceName, &item.Protocol, &item.Strategy, &item.Port, &item.Target, &item.Applied, &item.Status, &item.CreatedTime, &item.UpdatedTime); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *Repository) AddPeerShareCurrentFlow(shareID int64, delta int64) error {
+	if r == nil || r.db == nil {
+		return errors.New("repository not initialized")
+	}
+	if shareID <= 0 || delta <= 0 {
+		return nil
+	}
+	_, err := r.db.Exec(`UPDATE peer_share SET current_flow = current_flow + ?, updated_time = ? WHERE id = ?`, delta, unixMilliNow(), shareID)
+	return err
+}
+
+func (r *Repository) ResetPeerShareCurrentFlow(shareID int64, updatedTime int64) error {
+	if r == nil || r.db == nil {
+		return errors.New("repository not initialized")
+	}
+	if shareID <= 0 {
+		return nil
+	}
+	if updatedTime <= 0 {
+		updatedTime = unixMilliNow()
+	}
+	_, err := r.db.Exec(`UPDATE peer_share SET current_flow = 0, updated_time = ? WHERE id = ?`, updatedTime, shareID)
+	return err
+}
+
 func (r *Repository) CreatePeerShareRuntime(item *PeerShareRuntime) error {
 	if r == nil || r.db == nil {
 		return errors.New("repository not initialized")
