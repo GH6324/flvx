@@ -1,6 +1,6 @@
 # FLVX
 
-> 📞 **联系我们**: [Telegram群组](https://t.me/flvxpanel)
+> **联系我们**: [Telegram群组](https://t.me/flvxpanel)
 
 ## Original Project
 - **Name**: flux-panel
@@ -29,7 +29,6 @@ The following major changes and additions have been made in this fork (FLVX):
 - **Modified**: `docker-compose-v4.yml`, `docker-compose-v6.yml` (Updated for Go backend).
 - **Modified**: `install.sh`, `panel_install.sh` (Updated installation logic).
 - **Added**: `AGENTS.md` (Project documentation).
-
 
 ---
 ## 特性
