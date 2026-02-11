@@ -275,9 +275,13 @@ export default function PanelSharingPage() {
 
   const formatFlowGB = (bytes: number) => {
     if (!Number.isFinite(bytes) || bytes <= 0) {
-      return "0.00 GB";
+      return "0 B";
     }
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
+    if (bytes < 1024 * 1024 * 1024)
+      return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
   };
 
   const formatChainType = (chainType: number, hopInx: number) => {
