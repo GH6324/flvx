@@ -801,30 +801,7 @@ export default function NodePage() {
     }
   };
 
-  // 升级节点
-  const handleUpgradeNode = async (node: Node) => {
-    setNodeList((prev) =>
-      prev.map((n) => (n.id === node.id ? { ...n, upgradeLoading: true } : n)),
-    );
 
-    try {
-      const res = await upgradeNode(node.id);
-
-      if (res.code === 0) {
-        toast.success(`节点 ${node.name} 升级命令已发送，节点将自动重启`);
-      } else {
-        toast.error(res.msg || "升级失败");
-      }
-    } catch {
-      toast.error("网络错误，请重试");
-    } finally {
-      setNodeList((prev) =>
-        prev.map((n) =>
-          n.id === node.id ? { ...n, upgradeLoading: false } : n,
-        ),
-      );
-    }
-  };
 
   // 打开版本选择弹窗
   const openUpgradeModal = async (target: "single" | "batch", nodeId?: number) => {
