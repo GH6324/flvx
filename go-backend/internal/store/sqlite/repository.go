@@ -168,7 +168,13 @@ func Open(path string) (*Repository, error) {
 		return nil, err
 	}
 
-	raw, err := sql.Open("sqlite", path)
+	// Use _pragma DSN parameters so every connection from the pool gets
+	// the same settings (busy_timeout and synchronous are per-connection).
+	dsn := "file:" + path +
+		"?_pragma=busy_timeout(5000)" +
+		"&_pragma=journal_mode(WAL)" +
+		"&_pragma=synchronous(NORMAL)"
+	raw, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
