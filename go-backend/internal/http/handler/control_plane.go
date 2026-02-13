@@ -114,7 +114,7 @@ func (h *Handler) ensureTunnelPermission(userID int64, roleID int, tunnelID int6
 
 func (h *Handler) getForwardRecord(forwardID int64) (*forwardRecord, error) {
 	row := h.repo.DB().QueryRow(`
-		SELECT id, user_id, user_name, name, tunnel_id, remote_addr, strategy, status
+		SELECT id, user_id, user_name, name, tunnel_id, remote_addr, COALESCE(strategy, 'fifo'), status
 		FROM forward WHERE id = ? LIMIT 1
 	`, forwardID)
 	var fr forwardRecord
@@ -152,7 +152,7 @@ func (h *Handler) getTunnelRecord(tunnelID int64) (*tunnelRecord, error) {
 
 func (h *Handler) listForwardsByTunnel(tunnelID int64) ([]forwardRecord, error) {
 	rows, err := h.repo.DB().Query(`
-		SELECT id, user_id, user_name, name, tunnel_id, remote_addr, strategy, status
+		SELECT id, user_id, user_name, name, tunnel_id, remote_addr, COALESCE(strategy, 'fifo'), status
 		FROM forward
 		WHERE tunnel_id = ?
 		ORDER BY id ASC

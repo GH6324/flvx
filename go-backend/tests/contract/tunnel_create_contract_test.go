@@ -2,6 +2,7 @@ package contract_test
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -143,6 +144,17 @@ func TestTunnelUpdateAssignsChainPortsContract(t *testing.T) {
 	}
 	if outPort <= 0 {
 		t.Fatalf("expected out node port to be assigned, got %d", outPort)
+	}
+
+	var entryStrategy sql.NullString
+	if err := repo.DB().QueryRow(`SELECT strategy FROM chain_tunnel WHERE tunnel_id = ? AND chain_type = 1 LIMIT 1`, tunnelID).Scan(&entryStrategy); err != nil {
+		t.Fatalf("query entry strategy: %v", err)
+	}
+	if !entryStrategy.Valid || strings.TrimSpace(entryStrategy.String) == "" {
+		t.Fatalf("expected entry strategy to be non-null and non-empty")
+	}
+	if entryStrategy.String != "round" {
+		t.Fatalf("expected entry strategy round, got %q", entryStrategy.String)
 	}
 }
 

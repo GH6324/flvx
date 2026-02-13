@@ -2863,8 +2863,8 @@ func replaceTunnelChainsTx(tx *store.Tx, tunnelID int64, req map[string]interfac
 		if nodeID <= 0 {
 			continue
 		}
-		_, err := tx.Exec(`INSERT INTO chain_tunnel(tunnel_id, chain_type, node_id, port, strategy, inx, protocol) VALUES(?, '1', ?, NULL, NULL, 0, ?)`,
-			tunnelID, nodeID, defaultString(asString(n["protocol"]), "tls"))
+		_, err := tx.Exec(`INSERT INTO chain_tunnel(tunnel_id, chain_type, node_id, port, strategy, inx, protocol) VALUES(?, '1', ?, NULL, ?, 0, ?)`,
+			tunnelID, nodeID, defaultString(asString(n["strategy"]), "round"), defaultString(asString(n["protocol"]), "tls"))
 		if err != nil {
 			return err
 		}

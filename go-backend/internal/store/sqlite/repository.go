@@ -719,7 +719,7 @@ func (r *Repository) ListForwards() ([]map[string]interface{}, error) {
 	}
 
 	rows, err := r.db.Query(`
-		SELECT f.id, f.user_id, f.user_name, f.name, f.tunnel_id, COALESCE(t.name, ''), f.remote_addr, f.strategy,
+		SELECT f.id, f.user_id, f.user_name, f.name, f.tunnel_id, COALESCE(t.name, ''), f.remote_addr, COALESCE(f.strategy, 'fifo'),
 		       f.in_flow, f.out_flow, f.created_time, f.status, f.inx
 		FROM forward f
 		LEFT JOIN tunnel t ON t.id = f.tunnel_id
@@ -1297,7 +1297,7 @@ func bootstrapSchema(db *store.DB, schemaSQL, seedSQL string) error {
 	return nil
 }
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 func getSchemaVersion(db *store.DB) int {
 	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL DEFAULT 0)`)
@@ -1365,6 +1365,27 @@ func migrateSchema(db *store.DB) error {
 		for col, typ := range columns {
 			ensureColumn(table, col, typ)
 		}
+	}
+
+	normalizeStrategy := func(table, defaultValue string) error {
+		_, err := db.Exec(fmt.Sprintf("UPDATE %s SET strategy = ? WHERE strategy IS NULL", table), defaultValue)
+		if err != nil {
+			if isMissingTableError(db.Dialect(), err) {
+				return nil
+			}
+			return fmt.Errorf("normalize %s.strategy: %w", table, err)
+		}
+		return nil
+	}
+
+	if err := normalizeStrategy("forward", "fifo"); err != nil {
+		return err
+	}
+	if err := normalizeStrategy("chain_tunnel", "round"); err != nil {
+		return err
+	}
+	if err := normalizeStrategy("peer_share_runtime", "round"); err != nil {
+		return err
 	}
 
 	if db.Dialect() == store.DialectPostgres {
@@ -1535,6 +1556,17 @@ func isMissingColumnError(dialect store.Dialect, err error) bool {
 		return strings.Contains(msg, "column") && strings.Contains(msg, "does not exist")
 	}
 	return strings.Contains(msg, "no such column")
+}
+
+func isMissingTableError(dialect store.Dialect, err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if dialect == store.DialectPostgres {
+		return strings.Contains(msg, "relation") && strings.Contains(msg, "does not exist")
+	}
+	return strings.Contains(msg, "no such table")
 }
 
 func (r *Repository) CreatePeerShare(share *PeerShare) error {

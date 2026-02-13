@@ -1356,7 +1356,7 @@ func parseIPLiteral(raw string) net.IP {
 	}
 
 	if ip := net.ParseIP(value); ip != nil {
-		return ip
+		return normalizeIPAddress(ip)
 	}
 
 	host, _, err := net.SplitHostPort(value)
@@ -1368,7 +1368,17 @@ func parseIPLiteral(raw string) net.IP {
 	if host == "" {
 		return nil
 	}
-	return net.ParseIP(host)
+	return normalizeIPAddress(net.ParseIP(host))
+}
+
+func normalizeIPAddress(ip net.IP) net.IP {
+	if ip == nil {
+		return nil
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4
+	}
+	return ip.To16()
 }
 
 func isTrustedProxyIP(ip net.IP) bool {

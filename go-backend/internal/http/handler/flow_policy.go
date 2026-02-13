@@ -251,7 +251,7 @@ func (h *Handler) pauseForwardRecords(forwards []forwardRecord, now int64) {
 
 func (h *Handler) listActiveForwardsByUser(userID int64) ([]forwardRecord, error) {
 	rows, err := h.repo.DB().Query(`
-		SELECT id, user_id, user_name, name, tunnel_id, remote_addr, strategy, status
+		SELECT id, user_id, user_name, name, tunnel_id, remote_addr, COALESCE(strategy, 'fifo'), status
 		FROM forward
 		WHERE user_id = ? AND status = 1
 		ORDER BY id ASC
@@ -266,7 +266,7 @@ func (h *Handler) listActiveForwardsByUser(userID int64) ([]forwardRecord, error
 
 func (h *Handler) listActiveForwardsByUserTunnel(userID int64, tunnelID int64) ([]forwardRecord, error) {
 	rows, err := h.repo.DB().Query(`
-		SELECT id, user_id, user_name, name, tunnel_id, remote_addr, strategy, status
+		SELECT id, user_id, user_name, name, tunnel_id, remote_addr, COALESCE(strategy, 'fifo'), status
 		FROM forward
 		WHERE user_id = ? AND tunnel_id = ? AND status = 1
 		ORDER BY id ASC

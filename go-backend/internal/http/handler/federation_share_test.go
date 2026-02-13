@@ -568,6 +568,13 @@ func TestAuthPeerAllowedIPs(t *testing.T) {
 			wantAllowed: true,
 		},
 		{
+			name:        "ipv4-mapped proxy xff allowed",
+			allowedIPs:  "198.51.100.20",
+			remoteAddr:  "[::ffff:172.20.0.3]:34567",
+			xff:         "198.51.100.20, 172.20.0.3",
+			wantAllowed: true,
+		},
+		{
 			name:        "non whitelisted ip denied",
 			allowedIPs:  "203.0.113.10",
 			remoteAddr:  "203.0.113.99:23456",
