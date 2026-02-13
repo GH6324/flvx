@@ -342,6 +342,7 @@ export default function ConfigPage() {
   const handleExport = async () => {
     if (exportTypes.length === 0) {
       toast.error("请至少选择一种数据类型");
+
       return;
     }
     setExporting(true);
@@ -357,10 +358,12 @@ export default function ConfigPage() {
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+
     if (!file) return;
 
     if (importTypes.length === 0) {
       toast.error("请先选择要导入的数据类型");
+
       return;
     }
 
@@ -512,13 +515,13 @@ export default function ConfigPage() {
             <p className="text-sm text-gray-600 dark:text-gray-400">
               选择要导出的数据类型，导出为 JSON 格式文件
             </p>
-            
+
             <CheckboxGroup
-              label="选择导出内容"
-              orientation="horizontal"
               classNames={{
                 wrapper: "gap-4",
               }}
+              label="选择导出内容"
+              orientation="horizontal"
               value={exportTypes}
               onValueChange={(values) => setExportTypes(values as string[])}
             >
@@ -561,10 +564,7 @@ export default function ConfigPage() {
               >
                 全选
               </Button>
-              <Button
-                variant="flat"
-                onPress={() => setExportTypes([])}
-              >
+              <Button variant="flat" onPress={() => setExportTypes([])}>
                 清空
               </Button>
             </div>
@@ -580,11 +580,11 @@ export default function ConfigPage() {
             </p>
 
             <CheckboxGroup
-              label="选择导入内容"
-              orientation="horizontal"
               classNames={{
                 wrapper: "gap-4",
               }}
+              label="选择导入内容"
+              orientation="horizontal"
               value={importTypes}
               onValueChange={(values) => setImportTypes(values as string[])}
             >
@@ -601,18 +601,18 @@ export default function ConfigPage() {
             </CheckboxGroup>
 
             <input
-              type="file"
               ref={fileInputRef}
               accept=".json"
               className="hidden"
+              type="file"
               onChange={handleFileChange}
             />
 
             <div className="flex gap-3">
               <Button
                 color="primary"
-                variant="flat"
                 isLoading={importing}
+                variant="flat"
                 onPress={() => fileInputRef.current?.click()}
               >
                 {importing ? "导入中..." : "选择文件导入"}
